@@ -37,7 +37,11 @@ function(embed_hlsl_shaders target)
         endif()
 
         file(READ ${SHADER_PATH} SHADER_CONTENT)
-        string(MAKE_C_IDENTIFIER ${SHADER} VAR_NAME)
+
+        # Strip .hlsl extension BEFORE making C identifier
+        string(REPLACE ".hlsl" "" VAR_BASE ${SHADER})
+        string(MAKE_C_IDENTIFIER ${VAR_BASE} VAR_NAME)
+
         string(REPLACE "\\" "\\\\" SHADER_CONTENT "${SHADER_CONTENT}")
         string(REPLACE "\"" "\\\"" SHADER_CONTENT "${SHADER_CONTENT}")
         string(REPLACE "\n" "\\n\"\n\"" SHADER_CONTENT "${SHADER_CONTENT}")
