@@ -7,4 +7,3 @@ EXPORTS
     DXGID3D10RegisterLayers
     DXGIGetDebugInterface1
     DXGIReportAdapterConfiguration
-    DXGISetAdapterConfiguration
