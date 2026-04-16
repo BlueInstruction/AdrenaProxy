@@ -1,5 +1,3 @@
-src/dllmain.cpp
----
 #include "proxy_factory.h"
 #include "config.h"
 #include "logger.h"
