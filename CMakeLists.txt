@@ -5,21 +5,17 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# ─── Platform ────────────────────────────────────────
 if(NOT WIN32 AND NOT CMAKE_CROSSCOMPILING)
     message(WARNING "AdrenaProxy targets Windows x86_64 — cross-compile required on non-Windows.")
 endif()
 
-# ─── Options ─────────────────────────────────────────
 option(ADRENA_ENABLE_LOGGING   "Enable debug logging"     ON)
 option(ADRENA_ENABLE_SGSR2     "Enable SGSR2 temporal"    ON)
 option(ADRENA_ENABLE_FG        "Enable Frame Generation"  ON)
 option(ADRENA_ENABLE_OVERLAY   "Enable ImGui overlay"     ON)
 
-# ─── Dependencies ────────────────────────────────────
 include(FetchContent)
 
-# ImGui
 if(ADRENA_ENABLE_OVERLAY)
     FetchContent_Declare(
         imgui
@@ -36,21 +32,23 @@ if(ADRENA_ENABLE_OVERLAY)
         ${imgui_SOURCE_DIR}/imgui_widgets.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp
     )
+
+    # DX12 overlay backend only for MSVC (MinGW lacks PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)
+    if(MSVC)
+        list(APPEND IMGUI_SOURCES ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+    endif()
+
     add_library(imgui_lib STATIC ${IMGUI_SOURCES})
     target_include_directories(imgui_lib PUBLIC
         ${imgui_SOURCE_DIR}
         ${imgui_SOURCE_DIR}/backends
     )
-    # DirectX 12 header for ImGui DX12 backend
     target_compile_definitions(imgui_lib PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 endif()
 
-# ─── Shader Embedding ────────────────────────────────
 include(cmake/embed_shaders.cmake)
 
-# ─── AdrenaProxy DLL ─────────────────────────────────
 set(PROXY_SOURCES
     src/dllmain.cpp
     src/proxy_factory.cpp
@@ -103,19 +101,15 @@ if(ADRENA_ENABLE_FG)
     target_compile_definitions(adxgi PUBLIC ADRENA_FG_ENABLED)
 endif()
 
-# ─── Link ────────────────────────────────────────────
+# DX12 overlay only on MSVC
+if(MSVC)
+    target_compile_definitions(adxgi PRIVATE ADRENA_DX12_OVERLAY=1)
+endif()
+
 target_link_libraries(adxgi PRIVATE
-    dxgi
-    d3d11
-    d3d12
-    d3dcompiler
-    user32
-    kernel32
-    psapi
-    dxguid
+    dxgi d3d11 d3d12 d3dcompiler user32 kernel32 psapi dxguid
 )
 
-# ─── DLL Properties ──────────────────────────────────
 set_target_properties(adxgi PROPERTIES
     OUTPUT_NAME "dxgi"
     PREFIX ""
@@ -124,16 +118,9 @@ set_target_properties(adxgi PROPERTIES
 
 target_sources(adxgi PRIVATE ${CMAKE_SOURCE_DIR}/src/dxgi.def)
 
-# ─── Copy INI ────────────────────────────────────────
 add_custom_command(TARGET adxgi POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_SOURCE_DIR}/adrena_proxy.ini
         $<TARGET_FILE_DIR:adxgi>/adrena_proxy.ini
     COMMENT "Copying adrena_proxy.ini"
 )
-
-if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    message(STATUS "Cross-compiling for Windows x86_64")
-    message(STATUS "  CC:  ${CMAKE_C_COMPILER}")
-    message(STATUS "  CXX: ${CMAKE_CXX_COMPILER}")
-endif()
