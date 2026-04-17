@@ -119,15 +119,9 @@ HRESULT ProxySwapChain::GetParent(REFIID r, void** p) { return m_real->GetParent
 HRESULT ProxySwapChain::GetDevice(REFIID r, void** p) { return m_real->GetDevice(r,p); }
 
 HRESULT ProxySwapChain::GetBuffer(UINT idx, REFIID riid, void** ppBuf) {
-    auto& cfg = GetConfig();
-    // D3D11: redirect game to low-res render target
-    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_lowresRT11 && riid == __uuidof(ID3D11Texture2D)) {
-        return m_lowresRT11->QueryInterface(riid, ppBuf);
-    }
-    // D3D12: redirect game to low-res render target
-    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_lowresRT12 && riid == __uuidof(ID3D12Resource)) {
-        return m_lowresRT12->QueryInterface(riid, ppBuf);
-    }
+    // Pass-through: game renders at native resolution on the real backbuffer.
+    // SGSR runs as a post-process sharpening pass on Present, avoiding
+    // viewport mismatch issues that GetBuffer redirect causes in VKD3D.
     return m_real->GetBuffer(idx, riid, ppBuf);
 }
 
@@ -211,8 +205,8 @@ void ProxySwapChain::InitD3D12Compute() {
     D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {}; heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heapDesc.NumDescriptors = 2; heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     m_d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_computeHeap));
 
-    // Intermediate texture at render (low-res) dimensions for SGSR input
-    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_renderWidth; texDesc.Height = m_renderHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    // Intermediate texture at display dimensions (copy of backbuffer for SRV input)
+    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_displayWidth; texDesc.Height = m_displayHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
     m_d3d12Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_intermediateTex));
 
@@ -227,23 +221,21 @@ void ProxySwapChain::ExecuteD3D12Compute() {
 
     m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_computePSO);
 
-    // Source: m_lowresRT12 (game rendered here via GetBuffer redirect)
-    // Destination: real backbuffer at display resolution
+    // Post-process mode: backbuffer → intermediate (copy) → SGSR sharpen → backbuffer
     ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex(); m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
 
-    // Transition lowresRT12: RENDER_TARGET -> COPY_SOURCE
-    // Transition intermediateTex: NON_PIXEL_SHADER_RESOURCE -> COPY_DEST
+    // Transition backBuffer: PRESENT -> COPY_SOURCE, intermediate: SRV -> COPY_DEST
     D3D12_RESOURCE_BARRIER barriers[2] = {};
-    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = m_lowresRT12; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     m_cmdList->ResourceBarrier(2, barriers);
 
-    // Copy low-res game output into intermediate texture (SGSR SRV input)
-    m_cmdList->CopyResource(m_intermediateTex, m_lowresRT12);
+    // Copy backbuffer into intermediate (SGSR reads from this)
+    m_cmdList->CopyResource(m_intermediateTex, backBuffer);
 
-    // Transition intermediateTex: COPY_DEST -> SRV, backBuffer: PRESENT -> UAV
+    // Transition intermediate: COPY_DEST -> SRV, backBuffer: COPY_SOURCE -> UAV
     barriers[0].Transition.pResource = m_intermediateTex; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
-    barriers[1].Transition.pResource = backBuffer; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    barriers[1].Transition.pResource = backBuffer; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
     m_cmdList->ResourceBarrier(2, barriers);
 
     // Create descriptors
@@ -251,28 +243,28 @@ void ProxySwapChain::ExecuteD3D12Compute() {
     D3D12_CPU_DESCRIPTOR_HANDLE hCPU = m_computeHeap->GetCPUDescriptorHandleForHeapStart();
     D3D12_GPU_DESCRIPTOR_HANDLE hGPU = m_computeHeap->GetGPUDescriptorHandleForHeapStart();
 
-    // SRV: intermediate (low-res input)
+    // SRV: intermediate (copy of backbuffer — input)
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; srvDesc.Format = m_format; srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1; srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     m_d3d12Device->CreateShaderResourceView(m_intermediateTex, &srvDesc, hCPU); hCPU.ptr += descSize;
 
-    // UAV: backbuffer (full-res output)
+    // UAV: backbuffer (output — sharpened result)
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {}; uavDesc.Format = m_format; uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     m_d3d12Device->CreateUnorderedAccessView(backBuffer, nullptr, &uavDesc, hCPU);
 
-    // Dispatch compute
+    // Dispatch compute — 1:1 post-process (same input/output resolution)
     ID3D12DescriptorHeap* heaps[] = { m_computeHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
     m_cmdList->SetComputeRootSignature(m_rootSig);
-    // constants: [renderW, renderH, displayW, displayH] — actual upscaling dimensions
-    uint32_t constants[4] = { m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight };
+    // In post-process mode: renderSize == displaySize (1:1, sharpening only)
+    uint32_t constants[4] = { m_displayWidth, m_displayHeight, m_displayWidth, m_displayHeight };
     m_cmdList->SetComputeRoot32BitConstants(0, 4, constants, 0);
     m_cmdList->SetComputeRootDescriptorTable(1, hGPU);
     m_cmdList->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{ hGPU.ptr + descSize });
     m_cmdList->Dispatch((m_displayWidth + 7) / 8, (m_displayHeight + 7) / 8, 1);
 
-    // Transition backBuffer: UAV -> PRESENT, lowresRT12: COPY_SOURCE -> RENDER_TARGET
-    barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    barriers[1].Transition.pResource = m_lowresRT12; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    m_cmdList->ResourceBarrier(2, barriers);
+    // Transition backBuffer: UAV -> PRESENT
+    D3D12_RESOURCE_BARRIER finalBarrier = {};
+    finalBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; finalBarrier.Transition.pResource = backBuffer; finalBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; finalBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT; finalBarrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    m_cmdList->ResourceBarrier(1, &finalBarrier);
 
     m_cmdList->Close();
     ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
@@ -281,7 +273,7 @@ void ProxySwapChain::ExecuteD3D12Compute() {
 }
 
 void ProxySwapChain::ProcessSGSR12() {
-    if (!m_d3d12Device || !m_commandQueue || !m_lowresRT12) return;
+    if (!m_d3d12Device || !m_commandQueue) return;
     if (!m_computePSO) InitD3D12Compute();
     if (!m_computePSO) return;
     if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
@@ -423,29 +415,13 @@ void ProxySwapChain::TeardownResources() {
 // Pass-through implementations (m_real is IDXGISwapChain4* now, so all methods exist)
 HRESULT ProxySwapChain::SetFullscreenState(BOOL f, IDXGIOutput* t) { return m_real->SetFullscreenState(f,t); }
 HRESULT ProxySwapChain::GetFullscreenState(BOOL* f, IDXGIOutput** t) { return m_real->GetFullscreenState(f,t); }
-HRESULT ProxySwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC* d) {
-    HRESULT hr = m_real->GetDesc(d);
-    auto& cfg = GetConfig();
-    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
-        d->BufferDesc.Width = m_renderWidth;
-        d->BufferDesc.Height = m_renderHeight;
-    }
-    return hr;
-}
+HRESULT ProxySwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC* d) { return m_real->GetDesc(d); }
 HRESULT ProxySwapChain::ResizeBuffers(UINT bc, UINT w, UINT h, DXGI_FORMAT f, UINT fl) { TeardownResources(); HRESULT hr = m_real->ResizeBuffers(bc,w,h,f,fl); if (SUCCEEDED(hr)) SetupResources(); return hr; }
 HRESULT ProxySwapChain::ResizeTarget(const DXGI_MODE_DESC* d) { return m_real->ResizeTarget(d); }
 HRESULT ProxySwapChain::GetContainingOutput(IDXGIOutput** o) { return m_real->GetContainingOutput(o); }
 HRESULT ProxySwapChain::GetFrameStatistics(DXGI_FRAME_STATISTICS* s) { return m_real->GetFrameStatistics(s); }
 HRESULT ProxySwapChain::GetLastPresentCount(UINT* c) { return m_real->GetLastPresentCount(c); }
-HRESULT ProxySwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1* d) {
-    HRESULT hr = m_real->GetDesc1(d);
-    auto& cfg = GetConfig();
-    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
-        d->Width = m_renderWidth;
-        d->Height = m_renderHeight;
-    }
-    return hr;
-}
+HRESULT ProxySwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1* d) { return m_real->GetDesc1(d); }
 HRESULT ProxySwapChain::GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC* d) { return m_real->GetFullscreenDesc(d); }
 HRESULT ProxySwapChain::GetHwnd(HWND* h) { return m_real->GetHwnd(h); }
 HRESULT ProxySwapChain::GetCoreWindow(REFIID r, void** p) { return m_real->GetCoreWindow(r,p); }
@@ -456,15 +432,7 @@ HRESULT ProxySwapChain::GetBackgroundColor(DXGI_RGBA* c) { return m_real->GetBac
 HRESULT ProxySwapChain::SetRotation(DXGI_MODE_ROTATION r) { return m_real->SetRotation(r); }
 HRESULT ProxySwapChain::GetRotation(DXGI_MODE_ROTATION* r) { return m_real->GetRotation(r); }
 HRESULT ProxySwapChain::SetSourceSize(UINT w, UINT h) { return m_real->SetSourceSize(w,h); }
-HRESULT ProxySwapChain::GetSourceSize(UINT* w, UINT* h) {
-    HRESULT hr = m_real->GetSourceSize(w, h);
-    auto& cfg = GetConfig();
-    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
-        if (w) *w = m_renderWidth;
-        if (h) *h = m_renderHeight;
-    }
-    return hr;
-}
+HRESULT ProxySwapChain::GetSourceSize(UINT* w, UINT* h) { return m_real->GetSourceSize(w,h); }
 HRESULT ProxySwapChain::SetMaximumFrameLatency(UINT l) { return m_real->SetMaximumFrameLatency(l); }
 HRESULT ProxySwapChain::GetMaximumFrameLatency(UINT* l) { return m_real->GetMaximumFrameLatency(l); }
 HANDLE  ProxySwapChain::GetFrameLatencyWaitableObject() { return m_real->GetFrameLatencyWaitableObject(); }

@@ -71,7 +71,90 @@ void OverlayMenu::UpdateFPS() {
     m_frameCount++;
     LARGE_INTEGER freq, now; QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&now);
     double t = (double)now.QuadPart / (double)freq.QuadPart;
-    if (t - m_lastFpsTime >= 1.0) { m_fps = (float)(m_frameCount - m_lastFpsFrames) / (float)(t - m_lastFpsTime); m_lastFpsTime = t; m_lastFpsFrames = m_frameCount; }
+    if (m_startTime == 0.0) m_startTime = t;
+    if (t - m_lastFpsTime >= 1.0) {
+        m_fps = (float)(m_frameCount - m_lastFpsFrames) / (float)(t - m_lastFpsTime);
+        m_frameTime = (m_fps > 0.0f) ? (1000.0f / m_fps) : 0.0f;
+        m_lastFpsTime = t; m_lastFpsFrames = m_frameCount;
+    }
+}
+
+void OverlayMenu::DrawHUD() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    auto& cfg = GetConfig();
+    if (!cfg.fps_display) return;
+
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    ImGui::Begin("##HUD", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
+
+    // FPS + Frame Time
+    ImVec4 fpsColor = (m_fps >= 55.0f) ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f) :
+                      (m_fps >= 30.0f) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f) :
+                                         ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+    ImGui::TextColored(fpsColor, "FPS: %.0f", m_fps);
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f ms)", m_frameTime);
+
+    // GPU info
+    static GPUInfo gpuInfo = DetectGPU();
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "GPU: %s", gpuInfo.name.c_str());
+    if (gpuInfo.vramMB > 0)
+        ImGui::Text("VRAM: %llu MB", gpuInfo.vramMB);
+
+    // RAM usage
+    MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+    if (GlobalMemoryStatusEx(&memInfo)) {
+        DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
+        DWORDLONG totalMB = memInfo.ullTotalPhys / (1024 * 1024);
+        ImGui::Text("RAM: %llu / %llu MB", usedMB, totalMB);
+    }
+
+    // SGSR status
+    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%% scale)", cfg.render_scale * 100.0f);
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
+    }
+
+    ImGui::End();
+#endif
+}
+
+void OverlayMenu::DrawStartupNotification() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    LARGE_INTEGER freq, now; QueryPerformanceFrequency(&freq); QueryPerformanceCounter(&now);
+    double t = (double)now.QuadPart / (double)freq.QuadPart;
+    double elapsed = t - m_startTime;
+
+    // Show for 5 seconds after startup
+    if (elapsed > 5.0 || m_startupNotifShown) {
+        m_startupNotifShown = true;
+        return;
+    }
+
+    // Fade out in last 1.5 seconds
+    float alpha = (elapsed > 3.5) ? (float)(1.0 - (elapsed - 3.5) / 1.5) : 1.0f;
+
+    ImGuiIO& io = ImGui::GetIO();
+    float windowW = 320.0f;
+    float windowH = 50.0f;
+    ImGui::SetNextWindowPos(ImVec2(10, io.DisplaySize.y - windowH - 10), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(windowW, windowH));
+    ImGui::SetNextWindowBgAlpha(0.7f * alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::Begin("##Startup", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.8f, 1.0f, alpha));
+    ImGui::Text("AdrenaProxy v" ADRENA_PROXY_VERSION " Active");
+    ImGui::PopStyleColor();
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, alpha));
+    ImGui::Text("Press HOME to open menu");
+    ImGui::PopStyleColor();
+
+    ImGui::End();
+    ImGui::PopStyleVar();
+#endif
 }
 
 void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDXGISwapChain1* sc) {
@@ -87,12 +170,8 @@ void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDX
         ImGui_ImplDX11_Init(dev, ctx); m_d3d11Initialized = true; m_initialized = true;
     }
     UpdateFPS(); ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if(GetConfig().fps_display) {
-        ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
-        ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("FPS: %.0f", m_fps);
-        ImGui::End();
-    }
+    DrawHUD();
+    DrawStartupNotification();
     if(m_visible) BuildUI();
     ImGui::Render(); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 #endif
@@ -123,12 +202,8 @@ void OverlayMenu::BeginDX12Frame() {
     if (!m_d3d12Initialized) return;
     UpdateFPS();
     ImGui_ImplDX12_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if (GetConfig().fps_display) {
-        ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
-        ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize);
-        ImGui::Text("FPS: %.0f", m_fps);
-        ImGui::End();
-    }
+    DrawHUD();
+    DrawStartupNotification();
     if (m_visible) BuildUI();
     ImGui::Render();
 }
@@ -188,9 +263,20 @@ void OverlayMenu::BuildFGTab() {
 void OverlayMenu::BuildDisplayTab() {
 #ifdef ADRENA_OVERLAY_ENABLED
     auto& cfg = GetConfig();
-    if (ImGui::Checkbox("FPS Counter", &cfg.fps_display)) {}
+    if (ImGui::Checkbox("Show HUD (FPS/GPU/RAM)", &cfg.fps_display)) {}
     if (ImGui::SliderFloat("Overlay Opacity", &cfg.overlay_opacity, 0.3f, 1.0f, "%.2f")) ImGui::GetStyle().Alpha = cfg.overlay_opacity;
-    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "FPS: %.0f", m_fps);
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Current Stats:");
+    ImGui::Text("FPS: %.0f | Frame Time: %.1f ms", m_fps, m_frameTime);
+    static GPUInfo gpuInfo = DetectGPU();
+    ImGui::Text("GPU: %s", gpuInfo.name.c_str());
+    ImGui::Text("VRAM: %llu MB", gpuInfo.vramMB);
+    MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+    if (GlobalMemoryStatusEx(&memInfo)) {
+        DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
+        DWORDLONG totalMB = memInfo.ullTotalPhys / (1024 * 1024);
+        ImGui::Text("RAM: %llu / %llu MB (%lu%%)", usedMB, totalMB, memInfo.dwMemoryLoad);
+    }
 #endif
 }
 

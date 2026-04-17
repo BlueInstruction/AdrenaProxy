@@ -41,7 +41,12 @@ private:
     ID3D12DescriptorHeap* m_srvHeap = nullptr;
 #endif
 
-    float m_fps = 0.0f; uint64_t m_frameCount = 0; double m_lastFpsTime = 0.0; uint64_t m_lastFpsFrames = 0;
+    void DrawHUD();
+    void DrawStartupNotification();
+
+    float m_fps = 0.0f; float m_frameTime = 0.0f;
+    uint64_t m_frameCount = 0; double m_lastFpsTime = 0.0; uint64_t m_lastFpsFrames = 0;
+    double m_startTime = 0.0; bool m_startupNotifShown = false;
 };
 
 OverlayMenu& GetOverlayMenu();
