@@ -70,8 +70,10 @@ private:
     void RenderOverlay();
     void InitD3D12Compute();
     void ExecuteD3D12Compute();
+    void EnsureD3D12Infrastructure();
     void HookWindow(HWND hwnd);
     void CheckConfigChange();
+    void ApplyVulkanOptimizations();
     static LRESULT CALLBACK WndProcHook(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
     IDXGISwapChain4*    m_real;
@@ -124,6 +126,7 @@ private:
     UINT                m_displayWidth = 0, m_displayHeight = 0;
     DXGI_FORMAT         m_format = DXGI_FORMAT_UNKNOWN;
     float               m_lastRenderScale = 0.0f;
+    bool                m_vulkanOptApplied = false;
 };
 
 } // namespace adrena
