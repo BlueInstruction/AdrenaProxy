@@ -10,6 +10,7 @@ FGPass::FGPass() {}
 FGPass::~FGPass() {
     if(m_motionEstCS11) m_motionEstCS11->Release(); if(m_interpolateCS11) m_interpolateCS11->Release();
     if(m_constBuf11) m_constBuf11->Release(); if(m_prevColor11) m_prevColor11->Release(); if(m_prevColorSRV11) m_prevColorSRV11->Release();
+    if(m_dev11) m_dev11->Release();
 }
 
 bool FGPass::Init11(ID3D11Device* dev, UINT w, UINT h, DXGI_FORMAT fmt) {

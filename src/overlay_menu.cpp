@@ -16,6 +16,9 @@
 #include "imgui_impl_dx12.h"
 #include <d3d12.h>
 #endif
+
+// Forward declaration — required for ImGui v1.91.6-docking
+extern "C" LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
 namespace adrena {
@@ -39,9 +42,9 @@ void OverlayMenu::Init(HWND hwnd) {
 void OverlayMenu::Shutdown() {
 #ifdef ADRENA_OVERLAY_ENABLED
     if (!m_initialized) return;
-    ImGui_ImplDX11_Shutdown();
+    if (m_d3d11Initialized) { ImGui_ImplDX11_Shutdown(); m_d3d11Initialized = false; }
 #ifdef ADRENA_DX12_OVERLAY
-    ImGui_ImplDX12_Shutdown();
+    if (m_d3d12Initialized) { ImGui_ImplDX12_Shutdown(); m_d3d12Initialized = false; }
 #endif
     ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext(); m_initialized = false;
 #endif
@@ -72,7 +75,15 @@ void OverlayMenu::UpdateFPS() {
 void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDXGISwapChain1* sc) {
 #ifdef ADRENA_OVERLAY_ENABLED
     if(!dev || !ctx) return;
-    if(!m_d3d11Initialized) { ImGui_ImplDX11_Init(dev, ctx); m_d3d11Initialized = true; m_initialized = true; }
+    if(!m_d3d11Initialized) {
+        // Initialize ImGui context and Win32 backend if not yet done
+        if (!m_initialized) {
+            HWND hwnd = nullptr;
+            sc->GetHwnd(&hwnd);
+            Init(hwnd);
+        }
+        ImGui_ImplDX11_Init(dev, ctx); m_d3d11Initialized = true; m_initialized = true;
+    }
     UpdateFPS(); ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
     if(GetConfig().fps_display) {
         ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
@@ -89,6 +100,12 @@ void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDX
 void OverlayMenu::RenderFrame12(ID3D12Device* dev, ID3D12CommandQueue* queue, IDXGISwapChain1* sc) {
     if(!dev || !queue) return;
     if(!m_d3d12Initialized) {
+        // Initialize ImGui context and Win32 backend if not yet done
+        if (!m_initialized) {
+            HWND hwnd = nullptr;
+            sc->GetHwnd(&hwnd);
+            Init(hwnd);
+        }
         DXGI_SWAP_CHAIN_DESC1 scDesc = {};
         sc->GetDesc1(&scDesc);
 

@@ -15,6 +15,7 @@ SGSR1Pass::~SGSR1Pass() {
     if (m_constBuf11) m_constBuf11->Release(); if (m_sampler11) m_sampler11->Release();
     if (m_rootSig12) m_rootSig12->Release(); if (m_easuPSO12) m_easuPSO12->Release();
     if (m_constBuf12) m_constBuf12->Release();
+    if (m_dev11) m_dev11->Release(); if (m_dev12) m_dev12->Release();
 }
 
 bool SGSR1Pass::Init11(ID3D11Device* device, UINT rw, UINT rh, UINT dw, UINT dh, DXGI_FORMAT fmt) {

@@ -26,6 +26,8 @@ ProxySwapChain::ProxySwapChain(IDXGISwapChain1* real, IUnknown* device)
     } else {
         AD_LOG_W("SwapChain: Unknown device type");
     }
+
+    SetupResources();
 }
 
 ProxySwapChain::~ProxySwapChain() {

@@ -13,6 +13,7 @@ SGSR2Pass::~SGSR2Pass() {
     if (m_reprojectCS11) m_reprojectCS11->Release(); if (m_upscaleCS11) m_upscaleCS11->Release();
     if (m_constBuf11) m_constBuf11->Release(); if (m_sampler11) m_sampler11->Release(); if (m_historyTex11) m_historyTex11->Release();
     if (m_rootSig12) m_rootSig12->Release(); if (m_reprojectPSO12) m_reprojectPSO12->Release(); if (m_constBuf12) m_constBuf12->Release();
+    if (m_dev11) m_dev11->Release();
 }
 
 bool SGSR2Pass::Init11(ID3D11Device* dev, UINT rw, UINT rh, UINT dw, UINT dh, DXGI_FORMAT fmt) {
@@ -41,7 +42,7 @@ bool SGSR2Pass::Init11(ID3D11Device* dev, UINT rw, UINT rh, UINT dw, UINT dh, DX
 void SGSR2Pass::Dispatch11(ID3D11DeviceContext* ctx, ID3D11ShaderResourceView* colorSRV, ID3D11ShaderResourceView* depthSRV, ID3D11ShaderResourceView* motionSRV, ID3D11UnorderedAccessView* outputUAV) {
     if(!m_reprojectCS11 || !ctx) return;
     D3D11_MAPPED_SUBRESOURCE ms={}; ctx->Map(m_constBuf11, 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
-    auto* c=(SGSR2Constants*)ms.pData; c->renderSize[0]=m_renderW; c->renderSize[1]=m_renderH; c->displaySize[0]=m_displayW; c->displaySize[1]=m_displayH; c->sharpness=m_sharpness; c->frameCount=m_frameCount++;
+    auto* c=(SGSR2Constants*)ms.pData; c->renderSize[0]=m_renderW; c->renderSize[1]=m_renderH; c->displaySize[0]=m_displayW; c->displaySize[1]=m_displayH; c->sharpness=m_sharpness; c->frameCount=m_frameCount++; c->jitter[0]=0.0f; c->jitter[1]=0.0f; c->temporalWeight=m_temporalWeight;
     ctx->Unmap(m_constBuf11, 0);
     ctx->CSSetShader(m_reprojectCS11, nullptr, 0); ctx->CSSetConstantBuffers(0, 1, &m_constBuf11);
     ID3D11ShaderResourceView* srvs[]={colorSRV, depthSRV, motionSRV}; ctx->CSSetShaderResources(0, 3, srvs);

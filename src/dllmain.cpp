@@ -32,6 +32,7 @@ static HRESULT WrapFactoryResult(REFIID riid, void** ppv)
     if (!ppv) return E_POINTER;
     IDXGIFactory6* factory6 = nullptr;
     if (SUCCEEDED(((IUnknown*)*ppv)->QueryInterface(__uuidof(IDXGIFactory6), (void**)&factory6))) {
+        ((IUnknown*)*ppv)->Release(); // Release original reference before overwriting
         auto* proxy = new adrena::ProxyFactory(factory6);
         *ppv = proxy;
         return S_OK;

@@ -51,8 +51,8 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     float3 topC = g_currColor.SampleLevel(g_sampler, uv + float2(0, -dp.y), 0).rgb;
     float3 bottomC = g_currColor.SampleLevel(g_sampler, uv + float2(0, dp.y), 0).rgb;
     
-    float localVariance = (abs(currC - leftC) + abs(currC - rightC) +
-                          abs(currC - topC) + abs(currC - bottomC)) * 0.25;
+    float3 localVariance = (abs(currC - leftC) + abs(currC - rightC) +
+                           abs(currC - topC) + abs(currC - bottomC)) * 0.25;
     float highVariance = saturate(dot(localVariance, float3(1, 1, 1)) * 5.0 - 0.3);
     
     // Alpha channel detection (common UI indicator)

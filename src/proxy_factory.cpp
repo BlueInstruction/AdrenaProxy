@@ -38,7 +38,12 @@ HRESULT ProxyFactory::CreateSwapChain(IUnknown* dev, DXGI_SWAP_CHAIN_DESC* desc,
     desc1.BufferCount = desc->BufferCount; desc1.Scaling = DXGI_SCALING_NONE;
     desc1.SwapEffect = desc->SwapEffect; desc1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED; desc1.Flags = desc->Flags;
     HRESULT hr = m_real->CreateSwapChainForHwnd(dev, desc->OutputWindow, &desc1, nullptr, nullptr, &sc1);
-    if (SUCCEEDED(hr) && sc1 && sc) { *sc = sc1; return S_OK; }
+    if (SUCCEEDED(hr) && sc1 && sc) {
+        IDXGISwapChain1* wrapped = nullptr;
+        hr = WrapSwapChain(dev, sc1, &wrapped);
+        if (SUCCEEDED(hr)) { *sc = wrapped; return S_OK; }
+        *sc = sc1; return S_OK;
+    }
     return hr;
 }
 

@@ -41,11 +41,15 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     float4 prevColor = g_prevColor.SampleLevel(g_sampler, prevUV, 0);
     float4 currColor = g_currColor.SampleLevel(g_sampler, currUV, 0);
     
-    // Blend based on interpolation factor
-    float4 interpColor = lerp(prevColor, currColor, g_t);
-    
-    // Apply confidence weighting
+    // Simple blend (no motion compensation)
     float4 simpleBlend = lerp(prevColor, currColor, g_t);
+    
+    // Motion-compensated blend using reprojected samples
+    float4 prevWarped = g_prevColor.SampleLevel(g_sampler, prevUV, 0);
+    float4 currWarped = g_currColor.SampleLevel(g_sampler, currUV, 0);
+    float4 interpColor = lerp(prevWarped, currWarped, g_t);
+    
+    // Apply confidence weighting: high confidence uses motion-compensated, low uses simple blend
     interpColor = lerp(simpleBlend, interpColor, conf);
     
     // Reactive mask: skip interpolation for UI/particles
