@@ -42,8 +42,10 @@ static HRESULT WrapFactoryResult(REFIID riid, void** ppv)
 
 // FIX: No __declspec(dllexport) — the .def file handles exports
 // This avoids C2375 redefinition with dxgi.h declarations
+// All exported functions must use extern "C" so MinGW's linker can match
+// the undecorated symbol names listed in dxgi.def.
 
-HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory)
+extern "C" HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory)
 {
     if (!LoadRealDXGI()) return E_FAIL;
     auto fn = (PFN_CreateDXGIFactory)GetProcAddress(g_realDXGI, "CreateDXGIFactory");
@@ -53,7 +55,7 @@ HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory)
     return hr;
 }
 
-HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory)
+extern "C" HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory)
 {
     if (!LoadRealDXGI()) return E_FAIL;
     auto fn = (PFN_CreateDXGIFactory1)GetProcAddress(g_realDXGI, "CreateDXGIFactory1");
@@ -63,7 +65,7 @@ HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory)
     return hr;
 }
 
-HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory)
+extern "C" HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory)
 {
     if (!LoadRealDXGI()) return E_FAIL;
     auto fn = (PFN_CreateDXGIFactory2)GetProcAddress(g_realDXGI, "CreateDXGIFactory2");
@@ -80,7 +82,7 @@ typedef void(WINAPI* PFN_DXGID3D10RegisterLayers)(void*, UINT);
 typedef HRESULT(WINAPI* PFN_DXGIGetDebugInterface1)(UINT, REFIID, void**);
 typedef HRESULT(WINAPI* PFN_DXGIReportAdapterConfiguration)(UINT);
 
-HRESULT WINAPI DXGID3D10CreateDevice(HMODULE hModule, IDXGIFactory* pFactory,
+extern "C" HRESULT WINAPI DXGID3D10CreateDevice(HMODULE hModule, IDXGIFactory* pFactory,
     IDXGIAdapter* pAdapter, UINT Flags, void* pUnknown, void** ppDevice)
 {
     if (!LoadRealDXGI()) return E_FAIL;
@@ -88,7 +90,7 @@ HRESULT WINAPI DXGID3D10CreateDevice(HMODULE hModule, IDXGIFactory* pFactory,
     return fn ? fn(hModule, pFactory, pAdapter, Flags, pUnknown, ppDevice) : E_NOTIMPL;
 }
 
-HRESULT WINAPI DXGID3D10CreateDeviceAndSwapChain(HMODULE hModule, IDXGIFactory* pFactory,
+extern "C" HRESULT WINAPI DXGID3D10CreateDeviceAndSwapChain(HMODULE hModule, IDXGIFactory* pFactory,
     IDXGIAdapter* pAdapter, UINT Flags, void* pUnknown, void* pSwapChainDesc,
     void** ppSwapChain, void** ppDevice)
 {
@@ -97,21 +99,21 @@ HRESULT WINAPI DXGID3D10CreateDeviceAndSwapChain(HMODULE hModule, IDXGIFactory* 
     return fn ? fn(hModule, pFactory, pAdapter, Flags, pUnknown, pSwapChainDesc, ppSwapChain, ppDevice) : E_NOTIMPL;
 }
 
-void WINAPI DXGID3D10RegisterLayers(void* pLayers, UINT uiLayers)
+extern "C" void WINAPI DXGID3D10RegisterLayers(void* pLayers, UINT uiLayers)
 {
     if (!LoadRealDXGI()) return;
     auto fn = (PFN_DXGID3D10RegisterLayers)GetProcAddress(g_realDXGI, "DXGID3D10RegisterLayers");
     if (fn) fn(pLayers, uiLayers);
 }
 
-HRESULT WINAPI DXGIGetDebugInterface1(UINT Flags, REFIID riid, void** ppDebug)
+extern "C" HRESULT WINAPI DXGIGetDebugInterface1(UINT Flags, REFIID riid, void** ppDebug)
 {
     if (!LoadRealDXGI()) return E_FAIL;
     auto fn = (PFN_DXGIGetDebugInterface1)GetProcAddress(g_realDXGI, "DXGIGetDebugInterface1");
     return fn ? fn(Flags, riid, ppDebug) : E_NOTIMPL;
 }
 
-HRESULT WINAPI DXGIReportAdapterConfiguration(UINT AdapterIndex)
+extern "C" HRESULT WINAPI DXGIReportAdapterConfiguration(UINT AdapterIndex)
 {
     if (!LoadRealDXGI()) return E_FAIL;
     auto fn = (PFN_DXGIReportAdapterConfiguration)GetProcAddress(g_realDXGI, "DXGIReportAdapterConfiguration");
