@@ -294,15 +294,85 @@ void ProxySwapChain::ProcessSGSR12() {
 void ProxySwapChain::RenderOverlay() {
 #ifdef ADRENA_OVERLAY_ENABLED
     auto& overlay = GetOverlayMenu();
-    overlay.UpdateFPS();
 
     if (!m_isD3D12) {
         overlay.RenderFrame11(m_d3d11Device, m_d3d11Ctx, m_real);
         return;
     }
-    // D3D11 fallback only — D3D12 overlay rendering is deferred to future work
-    // For now, FPS counter and menu are only visible in D3D11 mode
-#endif
+
+#ifdef ADRENA_DX12_OVERLAY
+    if (!m_d3d12Device || !m_commandQueue) return;
+
+    // Lazy-init overlay D3D12 resources
+    if (!m_overlayCmdAlloc) {
+        m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_overlayCmdAlloc));
+    }
+    if (!m_overlayCmdList) {
+        m_d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_overlayCmdAlloc, nullptr, IID_PPV_ARGS(&m_overlayCmdList));
+        m_overlayCmdList->Close();
+    }
+    if (!m_rtvHeap) {
+        D3D12_DESCRIPTOR_HEAP_DESC rtvDesc = {};
+        rtvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        rtvDesc.NumDescriptors = 8; // enough for triple+ buffering
+        rtvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+        m_d3d12Device->CreateDescriptorHeap(&rtvDesc, IID_PPV_ARGS(&m_rtvHeap));
+    }
+
+    // Init ImGui DX12 backend on first call
+    DXGI_SWAP_CHAIN_DESC1 scDesc = {};
+    m_real->GetDesc1(&scDesc);
+    overlay.InitDX12(m_d3d12Device, scDesc.BufferCount, m_format);
+
+    // Wait for previous overlay work to complete
+    if (m_fence && m_fence->GetCompletedValue() < m_fenceValue) {
+        m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent);
+        WaitForSingleObject(m_fenceEvent, INFINITE);
+    }
+
+    // Build ImGui frame (FPS counter + menu)
+    overlay.BeginDX12Frame();
+
+    // Record overlay commands
+    m_overlayCmdAlloc->Reset();
+    m_overlayCmdList->Reset(m_overlayCmdAlloc, nullptr);
+
+    ID3D12Resource* backBuffer = nullptr;
+    UINT index = m_real->GetCurrentBackBufferIndex();
+    m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
+
+    // Create RTV for current backbuffer
+    UINT rtvDescSize = m_d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    rtvHandle.ptr += index * rtvDescSize;
+    m_d3d12Device->CreateRenderTargetView(backBuffer, nullptr, rtvHandle);
+
+    // Transition backbuffer: PRESENT -> RENDER_TARGET
+    D3D12_RESOURCE_BARRIER barrier = {};
+    barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    barrier.Transition.pResource = backBuffer;
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    m_overlayCmdList->ResourceBarrier(1, &barrier);
+
+    m_overlayCmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+    // Render ImGui draw data into command list
+    overlay.EndDX12Frame(m_overlayCmdList);
+
+    // Transition backbuffer: RENDER_TARGET -> PRESENT
+    barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    m_overlayCmdList->ResourceBarrier(1, &barrier);
+
+    m_overlayCmdList->Close();
+    ID3D12CommandList* lists[] = { m_overlayCmdList };
+    m_commandQueue->ExecuteCommandLists(1, lists);
+
+    backBuffer->Release();
+#endif // ADRENA_DX12_OVERLAY
+#endif // ADRENA_OVERLAY_ENABLED
 }
 
 void ProxySwapChain::SetupResources() {
@@ -353,13 +423,29 @@ void ProxySwapChain::TeardownResources() {
 // Pass-through implementations (m_real is IDXGISwapChain4* now, so all methods exist)
 HRESULT ProxySwapChain::SetFullscreenState(BOOL f, IDXGIOutput* t) { return m_real->SetFullscreenState(f,t); }
 HRESULT ProxySwapChain::GetFullscreenState(BOOL* f, IDXGIOutput** t) { return m_real->GetFullscreenState(f,t); }
-HRESULT ProxySwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC* d) { return m_real->GetDesc(d); }
+HRESULT ProxySwapChain::GetDesc(DXGI_SWAP_CHAIN_DESC* d) {
+    HRESULT hr = m_real->GetDesc(d);
+    auto& cfg = GetConfig();
+    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
+        d->BufferDesc.Width = m_renderWidth;
+        d->BufferDesc.Height = m_renderHeight;
+    }
+    return hr;
+}
 HRESULT ProxySwapChain::ResizeBuffers(UINT bc, UINT w, UINT h, DXGI_FORMAT f, UINT fl) { TeardownResources(); HRESULT hr = m_real->ResizeBuffers(bc,w,h,f,fl); if (SUCCEEDED(hr)) SetupResources(); return hr; }
 HRESULT ProxySwapChain::ResizeTarget(const DXGI_MODE_DESC* d) { return m_real->ResizeTarget(d); }
 HRESULT ProxySwapChain::GetContainingOutput(IDXGIOutput** o) { return m_real->GetContainingOutput(o); }
 HRESULT ProxySwapChain::GetFrameStatistics(DXGI_FRAME_STATISTICS* s) { return m_real->GetFrameStatistics(s); }
 HRESULT ProxySwapChain::GetLastPresentCount(UINT* c) { return m_real->GetLastPresentCount(c); }
-HRESULT ProxySwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1* d) { return m_real->GetDesc1(d); }
+HRESULT ProxySwapChain::GetDesc1(DXGI_SWAP_CHAIN_DESC1* d) {
+    HRESULT hr = m_real->GetDesc1(d);
+    auto& cfg = GetConfig();
+    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
+        d->Width = m_renderWidth;
+        d->Height = m_renderHeight;
+    }
+    return hr;
+}
 HRESULT ProxySwapChain::GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC* d) { return m_real->GetFullscreenDesc(d); }
 HRESULT ProxySwapChain::GetHwnd(HWND* h) { return m_real->GetHwnd(h); }
 HRESULT ProxySwapChain::GetCoreWindow(REFIID r, void** p) { return m_real->GetCoreWindow(r,p); }
@@ -370,7 +456,15 @@ HRESULT ProxySwapChain::GetBackgroundColor(DXGI_RGBA* c) { return m_real->GetBac
 HRESULT ProxySwapChain::SetRotation(DXGI_MODE_ROTATION r) { return m_real->SetRotation(r); }
 HRESULT ProxySwapChain::GetRotation(DXGI_MODE_ROTATION* r) { return m_real->GetRotation(r); }
 HRESULT ProxySwapChain::SetSourceSize(UINT w, UINT h) { return m_real->SetSourceSize(w,h); }
-HRESULT ProxySwapChain::GetSourceSize(UINT* w, UINT* h) { return m_real->GetSourceSize(w,h); }
+HRESULT ProxySwapChain::GetSourceSize(UINT* w, UINT* h) {
+    HRESULT hr = m_real->GetSourceSize(w, h);
+    auto& cfg = GetConfig();
+    if (SUCCEEDED(hr) && cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_renderWidth > 0) {
+        if (w) *w = m_renderWidth;
+        if (h) *h = m_renderHeight;
+    }
+    return hr;
+}
 HRESULT ProxySwapChain::SetMaximumFrameLatency(UINT l) { return m_real->SetMaximumFrameLatency(l); }
 HRESULT ProxySwapChain::GetMaximumFrameLatency(UINT* l) { return m_real->GetMaximumFrameLatency(l); }
 HANDLE  ProxySwapChain::GetFrameLatencyWaitableObject() { return m_real->GetFrameLatencyWaitableObject(); }

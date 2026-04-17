@@ -45,6 +45,7 @@ void OverlayMenu::Shutdown() {
     if (m_d3d11Initialized) { ImGui_ImplDX11_Shutdown(); m_d3d11Initialized = false; }
 #ifdef ADRENA_DX12_OVERLAY
     if (m_d3d12Initialized) { ImGui_ImplDX12_Shutdown(); m_d3d12Initialized = false; }
+    if (m_srvHeap) { m_srvHeap->Release(); m_srvHeap = nullptr; }
 #endif
     ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext(); m_initialized = false;
 #endif
@@ -97,46 +98,45 @@ void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDX
 }
 
 #ifdef ADRENA_DX12_OVERLAY
-void OverlayMenu::RenderFrame12(ID3D12Device* dev, ID3D12CommandQueue* queue, IDXGISwapChain1* sc) {
-    if(!dev || !queue) return;
-    if(!m_d3d12Initialized) {
-        // Initialize ImGui context and Win32 backend if not yet done
-        if (!m_initialized) {
-            HWND hwnd = nullptr;
-            sc->GetHwnd(&hwnd);
-            Init(hwnd);
-        }
-        DXGI_SWAP_CHAIN_DESC1 scDesc = {};
-        sc->GetDesc1(&scDesc);
+void OverlayMenu::InitDX12(ID3D12Device* dev, UINT bufferCount, DXGI_FORMAT format) {
+    if (m_d3d12Initialized) return;
+    if (!m_initialized) return; // Win32 backend must be initialized first via Init(hwnd)
 
-        // Create SRV descriptor heap for ImGui font texture
-        D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
-        srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-        srvDesc.NumDescriptors = 1;
-        srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-        ID3D12DescriptorHeap* srvHeap = nullptr;
-        dev->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap));
+    // Create SRV descriptor heap for ImGui font texture
+    D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
+    srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+    srvDesc.NumDescriptors = 1;
+    srvDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    dev->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&m_srvHeap));
 
-        // FIX: ImGui_ImplDX12_Init requires 6 arguments (added CPU descriptor handle)
-        ImGui_ImplDX12_Init(dev, scDesc.BufferCount, scDesc.Format,
-            srvHeap,
-            srvHeap->GetCPUDescriptorHandleForHeapStart(),
-            srvHeap->GetGPUDescriptorHandleForHeapStart());
+    ImGui_ImplDX12_Init(dev, bufferCount, format,
+        m_srvHeap,
+        m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
+        m_srvHeap->GetGPUDescriptorHandleForHeapStart());
 
-        m_d3d12Initialized = true; m_initialized = true;
-        AD_LOG_I("Overlay DX12 backend initialized");
-    }
-    UpdateFPS(); ImGui_ImplDX12_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if(GetConfig().fps_display) {
+    m_d3d12Initialized = true;
+    AD_LOG_I("Overlay DX12 backend initialized");
+}
+
+void OverlayMenu::BeginDX12Frame() {
+    if (!m_d3d12Initialized) return;
+    UpdateFPS();
+    ImGui_ImplDX12_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
+    if (GetConfig().fps_display) {
         ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
         ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize);
         ImGui::Text("FPS: %.0f", m_fps);
         ImGui::End();
     }
-    if(m_visible) BuildUI();
+    if (m_visible) BuildUI();
     ImGui::Render();
-    // Full DX12 overlay render requires command allocator/list management
-    // This is a stub - the actual render loop needs to be integrated with the game's command queue
+}
+
+void OverlayMenu::EndDX12Frame(ID3D12GraphicsCommandList* cmdList) {
+    if (!m_d3d12Initialized || !cmdList) return;
+    ID3D12DescriptorHeap* heaps[] = { m_srvHeap };
+    cmdList->SetDescriptorHeaps(1, heaps);
+    ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), cmdList);
 }
 #endif
 
