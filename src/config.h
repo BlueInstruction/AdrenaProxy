@@ -19,7 +19,7 @@ struct Config {
 
     FGMode     fg_mode        = FGMode::X1;
     MotionQuality motion_quality = MotionQuality::Medium;
-    int        fps_threshold  = 60;
+    int        fps_threshold  = 0;
 
     bool      overlay_enabled = true;
     int       toggle_key      = VK_HOME;    // Now windows.h is included first

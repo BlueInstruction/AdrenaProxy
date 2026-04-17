@@ -429,10 +429,6 @@ void ProxySwapChain::ProcessFrameGen12() {
     // Then present the interpolated result as extra frames
     int multiplier = (int)cfg.fg_mode + 1; // X1=1, X2=2, X3=3, X4=4, X5=5, X6=6
 
-    // Ensure shared D3D12 infrastructure exists (fence, cmd allocator, cmd list)
-    EnsureD3D12Infrastructure();
-    if (!m_fence || !m_cmdAlloc || !m_cmdList) return;
-
     for (int i = 1; i < multiplier; i++) {
         float t = (float)i / (float)multiplier;
 

@@ -133,7 +133,7 @@ void OverlayMenu::DrawHUD() {
         }
 
         if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
-            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%%)", cfg.render_scale * 100.0f);
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: Sharpen (%.1f)", cfg.sharpness);
         } else {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
         }
@@ -313,7 +313,8 @@ void OverlayMenu::BuildFGTab() {
     }
     const char* mq[] = { "Low", "Medium", "High" }; int mqIdx = (int)cfg.motion_quality;
     if (ImGui::Combo("Motion Quality", &mqIdx, mq, 3)) cfg.motion_quality = (MotionQuality)mqIdx;
-    if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 120, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
+    if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 240, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "0 = always active (recommended for emulators)");
 
     ImGui::Separator();
     int multiplier = (int)cfg.fg_mode + 1;
