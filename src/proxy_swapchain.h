@@ -65,19 +65,43 @@ private:
     void ProcessSGSR11();
     void ProcessSGSR12();
     void RenderOverlay();
+    void InitD3D12Compute();
+    void ExecuteD3D12Compute();
+    void HookWindow(HWND hwnd);
+    static LRESULT CALLBACK WndProcHook(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-    // FIX: Use IDXGISwapChain4* so all methods are accessible
     IDXGISwapChain4*    m_real;
     ULONG               m_refCount = 1;
     bool                m_isD3D12 = false;
     bool                m_initialized = false;
 
+    // D3D11 path
     ID3D11Device*       m_d3d11Device = nullptr;
     ID3D11DeviceContext* m_d3d11Ctx = nullptr;
+
+    // D3D12 path
     ID3D12Device*       m_d3d12Device = nullptr;
     ID3D12CommandQueue* m_commandQueue = nullptr;
-    ID3D12GraphicsCommandList* m_cmdList = nullptr;
     ID3D12CommandAllocator* m_cmdAlloc = nullptr;
+    ID3D12GraphicsCommandList* m_cmdList = nullptr;
+
+    // D3D12 Compute Pipeline for SGSR
+    ID3D12RootSignature* m_rootSig = nullptr;
+    ID3D12PipelineState* m_computePSO = nullptr;
+    ID3D12Resource*      m_intermediateTex = nullptr;
+    ID3D12DescriptorHeap* m_computeHeap = nullptr;
+    ID3D12Fence*        m_fence = nullptr;
+    HANDLE              m_fenceEvent = nullptr;
+    UINT64              m_fenceValue = 0;
+
+    // D3D12 Overlay Pipeline
+    ID3D12CommandAllocator* m_overlayCmdAlloc = nullptr;
+    ID3D12GraphicsCommandList* m_overlayCmdList = nullptr;
+    ID3D12DescriptorHeap* m_rtvHeap = nullptr;
+
+    // Input Hook
+    HWND                m_hwnd = nullptr;
+    static WNDPROC      s_origWndProc;
 
     ID3D11Texture2D*    m_lowresRT11 = nullptr;
     UINT                m_renderWidth = 0, m_renderHeight = 0;

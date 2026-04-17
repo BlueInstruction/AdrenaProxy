@@ -26,8 +26,9 @@ public:
     void ToggleVisibility(); bool IsVisible() const { return m_visible; }
     void HandleInput(UINT msg, WPARAM wParam, LPARAM lParam);
     void UpdateFPS(); float GetFPS() const { return m_fps; }
+    void BuildUI();
 private:
-    void BuildUI(); void BuildSGSRTab(); void BuildFGTab(); void BuildDisplayTab(); void BuildAdvancedTab();
+    void BuildSGSRTab(); void BuildFGTab(); void BuildDisplayTab(); void BuildAdvancedTab();
     bool m_initialized = false, m_visible = false, m_d3d11Initialized = false;
 
 #ifdef ADRENA_DX12_OVERLAY

@@ -2,12 +2,55 @@
 #include "config.h"
 #include "logger.h"
 #include "overlay_menu.h"
+#include "embedded_shaders.h"
+#include <d3dcompiler.h>
+
+#ifdef ADRENA_OVERLAY_ENABLED
+#include "imgui.h"
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx11.h"
+#ifdef ADRENA_DX12_OVERLAY
+#include "imgui_impl_dx12.h"
+#endif
+// Forward declaration for WndProc handler
+LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
 
 namespace adrena {
 
+// Static member initialization
+WNDPROC ProxySwapChain::s_origWndProc = nullptr;
+
+// ─── Window Input Hook ─────────────────────────────────
+LRESULT CALLBACK ProxySwapChain::WndProcHook(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+    auto& overlay = GetOverlayMenu();
+    auto& cfg = GetConfig();
+
+    // Toggle Menu
+    if (uMsg == WM_KEYDOWN && wParam == (WPARAM)cfg.toggle_key) {
+        overlay.ToggleVisibility();
+    }
+
+#ifdef ADRENA_OVERLAY_ENABLED
+    // Feed input to ImGui
+    ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+#endif
+
+    return CallWindowProcW(s_origWndProc, hWnd, uMsg, wParam, lParam);
+}
+
+void ProxySwapChain::HookWindow(HWND hwnd) {
+    if (m_hwnd || !hwnd) return;
+    m_hwnd = hwnd;
+    GetOverlayMenu().Init(hwnd);
+    s_origWndProc = (WNDPROC)SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)WndProcHook);
+    AD_LOG_I("Hooked Window WndProc (HWND=%p)", hwnd);
+}
+
+// ─── Constructor / Destructor ──────────────────────────
 ProxySwapChain::ProxySwapChain(IDXGISwapChain1* real, IUnknown* device)
 {
-    // FIX: Query for IDXGISwapChain4 so all methods work
+    // Query for IDXGISwapChain4 so all methods work
     if (FAILED(real->QueryInterface(__uuidof(IDXGISwapChain4), (void**)&m_real))) {
         m_real = nullptr;
         AD_LOG_E("Failed to get IDXGISwapChain4 from real swapchain");
@@ -32,6 +75,11 @@ ProxySwapChain::ProxySwapChain(IDXGISwapChain1* real, IUnknown* device)
 
 ProxySwapChain::~ProxySwapChain() {
     TeardownResources();
+    // Unhook WndProc
+    if (m_hwnd && s_origWndProc) {
+        SetWindowLongPtrW(m_hwnd, GWLP_WNDPROC, (LONG_PTR)s_origWndProc);
+        s_origWndProc = nullptr;
+    }
     if (m_real) m_real->Release();
     if (m_d3d11Device) m_d3d11Device->Release();
     if (m_d3d11Ctx) m_d3d11Ctx->Release();
@@ -39,6 +87,15 @@ ProxySwapChain::~ProxySwapChain() {
     if (m_commandQueue) m_commandQueue->Release();
     if (m_cmdList) m_cmdList->Release();
     if (m_cmdAlloc) m_cmdAlloc->Release();
+    if (m_rootSig) m_rootSig->Release();
+    if (m_computePSO) m_computePSO->Release();
+    if (m_intermediateTex) m_intermediateTex->Release();
+    if (m_computeHeap) m_computeHeap->Release();
+    if (m_fence) m_fence->Release();
+    if (m_fenceEvent) CloseHandle(m_fenceEvent);
+    if (m_overlayCmdAlloc) m_overlayCmdAlloc->Release();
+    if (m_overlayCmdList) m_overlayCmdList->Release();
+    if (m_rtvHeap) m_rtvHeap->Release();
 }
 
 HRESULT ProxySwapChain::QueryInterface(REFIID riid, void** ppv) {
@@ -74,11 +131,20 @@ HRESULT ProxySwapChain::Present1(UINT SyncInterval, UINT Flags, const DXGI_PRESE
 
 HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
     auto& cfg = GetConfig();
+
+    // Hook window on first present
+    if (!m_hwnd) {
+        DXGI_SWAP_CHAIN_DESC desc = {};
+        if (SUCCEEDED(m_real->GetDesc(&desc)) && desc.OutputWindow) {
+            HookWindow(desc.OutputWindow);
+        }
+    }
+
     if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_initialized) {
         if (m_isD3D12) ProcessSGSR12(); else ProcessSGSR11();
     }
 #ifdef ADRENA_OVERLAY_ENABLED
-    if (cfg.overlay_enabled) RenderOverlay();
+    if (cfg.overlay_enabled && m_hwnd) RenderOverlay();
 #endif
     return m_real->Present(SyncInterval, Flags);
 }
@@ -93,25 +159,114 @@ void ProxySwapChain::ProcessSGSR11() {
     }
 }
 
-void ProxySwapChain::ProcessSGSR12() {
-    if (!m_d3d12Device || !m_commandQueue) return;
-    if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
-    if (!m_cmdList) m_d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_cmdAlloc, nullptr, IID_PPV_ARGS(&m_cmdList));
-    m_cmdAlloc->Reset();
-    m_cmdList->Reset(m_cmdAlloc, nullptr);
-    // SGSR12 compute dispatch here
-    m_cmdList->Close();
-    ID3D12CommandList* lists[] = { m_cmdList };
-    m_commandQueue->ExecuteCommandLists(1, lists);
+// ─── D3D12 SGSR Compute Pipeline ────────────────────────
+
+void ProxySwapChain::InitD3D12Compute() {
+    if (!m_d3d12Device || m_computePSO) return;
+    AD_LOG_I("Initializing D3D12 Compute Pipeline for SGSR1...");
+
+    D3D12_DESCRIPTOR_RANGE ranges[2] = {};
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; ranges[0].NumDescriptors = 1; ranges[0].BaseShaderRegister = 0;
+    ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV; ranges[1].NumDescriptors = 1; ranges[1].BaseShaderRegister = 0;
+
+    D3D12_ROOT_PARAMETER rootParams[3] = {};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; rootParams[0].Constants.ShaderRegister = 0; rootParams[0].Constants.Num32BitValues = 4; rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[1].DescriptorTable.NumDescriptorRanges = 1; rootParams[1].DescriptorTable.pDescriptorRanges = &ranges[0]; rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[2].DescriptorTable.NumDescriptorRanges = 1; rootParams[2].DescriptorTable.pDescriptorRanges = &ranges[1]; rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_STATIC_SAMPLER_DESC sampler = {}; sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR; sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP; sampler.ShaderRegister = 0; sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rsDesc = {}; rsDesc.NumParameters = 3; rsDesc.pParameters = rootParams; rsDesc.NumStaticSamplers = 1; rsDesc.pStaticSamplers = &sampler; rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    ID3DBlob* sigBlob = nullptr; ID3DBlob* errBlob = nullptr;
+    HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob);
+    if (FAILED(hr)) { AD_LOG_E("Root Sig Error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "Unknown"); if (errBlob) errBlob->Release(); return; }
+    m_d3d12Device->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&m_rootSig));
+    sigBlob->Release();
+
+    ID3DBlob* shaderBlob = nullptr;
+    hr = D3DCompile(adrena::shaders::sgsr1_easu, adrena::shaders::sgsr1_easu_size, "sgsr1_easu.hlsl", nullptr, nullptr, "CSMain", "cs_5_0", 0, 0, &shaderBlob, &errBlob);
+    if (FAILED(hr)) { AD_LOG_E("SGSR1 Shader Compile Failed: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "Unknown"); if (errBlob) errBlob->Release(); return; }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {}; psoDesc.pRootSignature = m_rootSig; psoDesc.CS = { shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize() };
+    m_d3d12Device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&m_computePSO));
+    shaderBlob->Release();
+
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {}; heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heapDesc.NumDescriptors = 2; heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    m_d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_computeHeap));
+
+    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_displayWidth; texDesc.Height = m_displayHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+    m_d3d12Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_intermediateTex));
+
+    m_d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)); m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+    AD_LOG_I("D3D12 Compute Pipeline initialized! (%ux%u fmt=%u)", m_displayWidth, m_displayHeight, m_format);
 }
 
+void ProxySwapChain::ExecuteD3D12Compute() {
+    m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+    if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
+
+    m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_computePSO);
+    ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex(); m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
+
+    D3D12_RESOURCE_BARRIER barriers[2] = {};
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
+    m_cmdList->ResourceBarrier(2, barriers);
+    m_cmdList->CopyResource(m_intermediateTex, backBuffer);
+
+    barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    m_cmdList->ResourceBarrier(2, barriers);
+
+    UINT descSize = m_d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_CPU_DESCRIPTOR_HANDLE hCPU = m_computeHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_GPU_DESCRIPTOR_HANDLE hGPU = m_computeHeap->GetGPUDescriptorHandleForHeapStart();
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; srvDesc.Format = m_format; srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1; srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    m_d3d12Device->CreateShaderResourceView(m_intermediateTex, &srvDesc, hCPU); hCPU.ptr += descSize;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {}; uavDesc.Format = m_format; uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    m_d3d12Device->CreateUnorderedAccessView(backBuffer, nullptr, &uavDesc, hCPU);
+
+    ID3D12DescriptorHeap* heaps[] = { m_computeHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
+    m_cmdList->SetComputeRootSignature(m_rootSig);
+    uint32_t constants[4] = { m_displayWidth, m_displayHeight, m_displayWidth, m_displayHeight }; // 1:1 pass-through
+    m_cmdList->SetComputeRoot32BitConstants(0, 4, constants, 0);
+    m_cmdList->SetComputeRootDescriptorTable(1, hGPU);
+    m_cmdList->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{ hGPU.ptr + descSize });
+    m_cmdList->Dispatch((m_displayWidth + 7) / 8, (m_displayHeight + 7) / 8, 1);
+
+    D3D12_RESOURCE_BARRIER finalBarrier = {}; finalBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; finalBarrier.Transition.pResource = backBuffer; finalBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; finalBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    m_cmdList->ResourceBarrier(1, &finalBarrier);
+    m_cmdList->Close();
+
+    ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
+    m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+    backBuffer->Release();
+}
+
+void ProxySwapChain::ProcessSGSR12() {
+    if (!m_d3d12Device || !m_commandQueue) return;
+    if (!m_computePSO) InitD3D12Compute();
+    if (!m_computePSO) return;
+    if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
+    if (!m_cmdList) { m_d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_cmdAlloc, nullptr, IID_PPV_ARGS(&m_cmdList)); m_cmdList->Close(); }
+    ExecuteD3D12Compute();
+}
+
+// ─── Overlay Rendering ──────────────────────────────────
+
 void ProxySwapChain::RenderOverlay() {
+#ifdef ADRENA_OVERLAY_ENABLED
     auto& overlay = GetOverlayMenu();
-#ifdef ADRENA_DX12_OVERLAY
-    if (m_isD3D12) overlay.RenderFrame12(m_d3d12Device, m_commandQueue, m_real);
-    else
+    overlay.UpdateFPS();
+
+    if (!m_isD3D12) {
+        overlay.RenderFrame11(m_d3d11Device, m_d3d11Ctx, m_real);
+        return;
+    }
+    // D3D11 fallback only — D3D12 overlay rendering is deferred to future work
+    // For now, FPS counter and menu are only visible in D3D11 mode
 #endif
-    overlay.RenderFrame11(m_d3d11Device, m_d3d11Ctx, m_real);
 }
 
 void ProxySwapChain::SetupResources() {
