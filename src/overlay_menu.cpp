@@ -111,7 +111,7 @@ void OverlayMenu::DrawHUD() {
             ImGui::SameLine(); ImGui::Text("| RAM:%lluMB", usedMB);
         }
         if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
-            ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR %.0f%%", cfg.render_scale * 100.0f);
+            ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR ON");
         }
         if (cfg.fg_mode != FGMode::X1) {
             ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "| FG x%d", (int)cfg.fg_mode + 1);
@@ -294,15 +294,11 @@ void OverlayMenu::BuildSGSRTab() {
     if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); resIdx = 8; }
     if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {}
 
-    // Show current render resolution info
+    // Show current mode info
     ImGui::Separator();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Current: %.0f%% scale (sharpness %.2f)",
-                       cfg.render_scale * 100.0f, cfg.sharpness);
-    if (cfg.render_scale < 0.99f) {
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Mode: Upscale + Sharpen");
-    } else {
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Mode: Sharpen only (native)");
-    }
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Sharpness: %.2f", cfg.sharpness);
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Mode: Post-process sharpening (Lanczos2 + edge-adaptive)");
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Quality presets reserved for future upscaling support");
 #endif
 }
 

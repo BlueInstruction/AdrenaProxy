@@ -185,12 +185,11 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
     // Log every 300 frames to confirm Present is being called and SGSR is dispatching
     s_frameCount++;
     if (s_frameCount % 300 == 1) {
-        AD_LOG_I("Present #%u | SGSR=%s | FG=%s(x%d) | D3D12=%s | fence=%llu | render=%ux%u->%ux%u (%.0f%%)",
-                 s_frameCount, sgsrActive ? "ON" : "OFF",
+        AD_LOG_I("Present #%u | SGSR=%s(sharp=%.1f) | FG=%s(x%d) | D3D12=%s | fence=%llu | %ux%u",
+                 s_frameCount, sgsrActive ? "ON" : "OFF", cfg.sharpness,
                  fgActive ? "ON" : "OFF", (int)cfg.fg_mode + 1,
                  m_isD3D12 ? "yes" : "no", m_fenceValue,
-                 m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight,
-                 cfg.render_scale * 100.0f);
+                 m_displayWidth, m_displayHeight);
     }
 
     return m_real->Present(SyncInterval, Flags);
@@ -295,9 +294,14 @@ void ProxySwapChain::ExecuteD3D12Compute() {
     ID3D12DescriptorHeap* heaps[] = { m_computeHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
     m_cmdList->SetComputeRootSignature(m_rootSig);
     // Constants layout matches cbuffer: renderSize(2) + displaySize(2) + sharpness(1) + frameCount(1)
+    // NOTE: Since GetBuffer is pass-through (game renders at full display resolution),
+    // SGSR currently operates as a post-process sharpening pass (renderSize == displaySize).
+    // When renderSize < displaySize is passed, the Lanczos2 kernel would upscale, but
+    // the game content fills the entire backbuffer at displaySize, so upscaling has no
+    // visible effect. For true upscaling, GetBuffer redirect or viewport interception is needed.
     auto& cfg = GetConfig();
     struct { uint32_t renderW, renderH, displayW, displayH; float sharpness; uint32_t frameCount; } constants;
-    constants.renderW = m_renderWidth; constants.renderH = m_renderHeight;
+    constants.renderW = m_displayWidth; constants.renderH = m_displayHeight;
     constants.displayW = m_displayWidth; constants.displayH = m_displayHeight;
     constants.sharpness = cfg.sharpness; constants.frameCount = (uint32_t)m_fenceValue;
     m_cmdList->SetComputeRoot32BitConstants(0, 6, &constants, 0);
@@ -387,6 +391,10 @@ void ProxySwapChain::ProcessFrameGen12() {
 
     if (!m_fgInitialized) InitFG12();
     if (!m_fgInterpolatePSO) return;
+
+    // Ensure shared D3D12 infrastructure exists BEFORE first frame history copy
+    EnsureD3D12Infrastructure();
+    if (!m_fence || !m_cmdAlloc || !m_cmdList) return;
 
     // First frame: just save history, no interpolation
     if (!m_fgHasHistory) {
