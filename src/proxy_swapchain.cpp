@@ -118,7 +118,7 @@ void ProxySwapChain::SetupResources() {
     m_displayWidth = desc.Width; m_displayHeight = desc.Height; m_format = desc.Format;
     auto& cfg = GetConfig(); cfg.ApplyRenderScale();
     m_renderWidth = (UINT)(m_displayWidth * cfg.render_scale);
-    m_renderHeight = (UINT)(m_displayHeight * cfg.renderScale);
+    m_renderHeight = (UINT)(m_displayHeight * cfg.render_scale);
 
     if (!m_isD3D12 && m_d3d11Device) {
         D3D11_TEXTURE2D_DESC rtDesc = {};
