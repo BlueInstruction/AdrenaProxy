@@ -72,6 +72,7 @@ __declspec(dllexport) int NVNGX_Shutdown() {
     AD_LOG_I("NVNGX_Shutdown called");
     if (g_initialized) {
         g_sgsr.Shutdown();
+        if (g_params) { delete g_params; g_params = nullptr; }
         adrena::SharedState* ss = adrena::GetSharedState();
         if (ss) { adrena::SharedStateLock l(&ss->lock); ss->sgsr_active = false; ss->sgsr_enabled = false; }
         g_initialized = false;

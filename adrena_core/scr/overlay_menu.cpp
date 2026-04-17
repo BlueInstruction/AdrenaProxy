@@ -190,11 +190,17 @@ void OverlayMenu::Shutdown() {
 // Render — called once per frame from ProxySwapChain::PresentImpl
 // ────────────────────────────────────────────────────────
 
-void OverlayMenu::Render(ID3D12GraphicsCommandList* externalCmdList,
+void OverlayMenu::Render(ID3D12CommandQueue* cmdQueue,
                          ID3D12Resource* backbuffer,
                          uint32_t width, uint32_t height) {
 #ifdef ADRENA_DX12_OVERLAY
-    if (!m_initialized || !backbuffer) return;
+    if (!m_initialized || !backbuffer || !cmdQueue) return;
+
+    // ── Wait for previous overlay frame to finish on GPU ──
+    if (m_fence && m_fenceVal > 0 && m_fence->GetCompletedValue() < m_fenceVal) {
+        m_fence->SetEventOnCompletion(m_fenceVal, m_fenceEvent);
+        WaitForSingleObject(m_fenceEvent, INFINITE);
+    }
 
     // ── Begin ImGui frame ──
     ImGui_ImplDX12_NewFrame();
@@ -245,10 +251,13 @@ void OverlayMenu::Render(ID3D12GraphicsCommandList* externalCmdList,
 
     m_cmdList->Close();
 
-    // ── Execute overlay command list (non-blocking) ──
-    // The caller (ProxySwapChain) will execute this on the command queue
-    // We store it so the swapchain can submit it
-    // NOTE: The caller must call ExecuteCommandLists before the final Present
+    // ── Submit overlay command list to GPU ──
+    ID3D12CommandList* lists[] = { m_cmdList };
+    cmdQueue->ExecuteCommandLists(1, lists);
+
+    // ── Signal fence so next frame waits for completion ──
+    m_fenceVal++;
+    cmdQueue->Signal(m_fence, m_fenceVal);
 
 #endif
 }

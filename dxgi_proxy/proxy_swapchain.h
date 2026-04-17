@@ -90,6 +90,13 @@ private:
     uint32_t          m_height     = 0;
     DXGI_FORMAT       m_format     = DXGI_FORMAT_UNKNOWN;
 
+    // Persistent D3D12 resources for SGSR compute (avoids per-frame alloc)
+    ID3D12CommandAllocator*    m_sgsrCmdAlloc = nullptr;
+    ID3D12GraphicsCommandList* m_sgsrCmdList  = nullptr;
+    ID3D12Fence*               m_sgsrFence    = nullptr;
+    HANDLE                     m_sgsrFenceEvent = nullptr;
+    uint64_t                   m_sgsrFenceVal = 0;
+
     // Config change detection
     uint64_t          m_lastConfigCheck = 0;
     float             m_lastScale       = 0.0f;

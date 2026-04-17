@@ -51,6 +51,15 @@ ProxySwapChain::ProxySwapChain(IDXGISwapChain4* real, IUnknown* device)
 }
 
 ProxySwapChain::~ProxySwapChain() {
+    // Wait for any in-flight SGSR GPU work before releasing
+    if (m_sgsrFence && m_sgsrFenceVal > 0 && m_sgsrFence->GetCompletedValue() < m_sgsrFenceVal) {
+        m_sgsrFence->SetEventOnCompletion(m_sgsrFenceVal, m_sgsrFenceEvent);
+        WaitForSingleObject(m_sgsrFenceEvent, INFINITE);
+    }
+    if (m_sgsrCmdList)    { m_sgsrCmdList->Release();    m_sgsrCmdList = nullptr; }
+    if (m_sgsrCmdAlloc)   { m_sgsrCmdAlloc->Release();   m_sgsrCmdAlloc = nullptr; }
+    if (m_sgsrFence)      { m_sgsrFence->Release();      m_sgsrFence = nullptr; }
+    if (m_sgsrFenceEvent) { CloseHandle(m_sgsrFenceEvent); m_sgsrFenceEvent = nullptr; }
     if (m_sgsr)    { delete m_sgsr;    m_sgsr    = nullptr; }
     if (m_overlay) { delete m_overlay;  m_overlay = nullptr; }
     if (m_device)   m_device->Release();
@@ -211,6 +220,20 @@ void ProxySwapChain::EnsureD3D12Infrastructure() {
         AD_LOG_I("Fallback SGSR1 initialized (%ux%u -> %ux%u)", rw, rh, m_width, m_height);
     }
 
+    // Create persistent D3D12 resources for SGSR compute
+    if (!m_sgsrCmdAlloc && m_device) {
+        m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+            IID_ID3D12CommandAllocator, (void**)&m_sgsrCmdAlloc);
+        if (m_sgsrCmdAlloc) {
+            m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+                m_sgsrCmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&m_sgsrCmdList);
+            if (m_sgsrCmdList) m_sgsrCmdList->Close();
+        }
+        m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+            IID_ID3D12Fence, (void**)&m_sgsrFence);
+        m_sgsrFenceEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+    }
+
     // Create overlay
     if (!m_overlay) {
         m_overlay = new OverlayMenu();
@@ -299,18 +322,21 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
     CheckConfigChange();
 
     // ── Path B: Fallback SGSR sharpening (non-DLSS games) ──
-    if (needSGSR && m_sgsr && m_sgsr->IsInitialized() && m_device) {
+    if (needSGSR && m_sgsr && m_sgsr->IsInitialized() && m_device
+        && m_sgsrCmdAlloc && m_sgsrCmdList && m_sgsrFence) {
+
+        // Wait for previous SGSR frame to complete before reusing allocator
+        if (m_sgsrFenceVal > 0 && m_sgsrFence->GetCompletedValue() < m_sgsrFenceVal) {
+            m_sgsrFence->SetEventOnCompletion(m_sgsrFenceVal, m_sgsrFenceEvent);
+            WaitForSingleObject(m_sgsrFenceEvent, INFINITE);
+        }
+
         ID3D12Resource* backbuffer = nullptr;
         if (SUCCEEDED(m_real->GetBuffer(m_real->GetCurrentBackBufferIndex(),
             IID_ID3D12Resource, (void**)&backbuffer))) {
 
-            ID3D12CommandAllocator* cmdAlloc = nullptr;
-            ID3D12GraphicsCommandList* cmdList = nullptr;
-
-            m_device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-                IID_ID3D12CommandAllocator, (void**)&cmdAlloc);
-            m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-                cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&cmdList);
+            m_sgsrCmdAlloc->Reset();
+            m_sgsrCmdList->Reset(m_sgsrCmdAlloc, nullptr);
 
             float scale = ss ? ss->render_scale : cfg.render_scale;
             uint32_t rw = (uint32_t)(m_width * scale);
@@ -327,15 +353,16 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
             params.displayWidth  = m_width;
             params.displayHeight = m_height;
 
-            m_sgsr->Execute(cmdList, params);
-            cmdList->Close();
+            m_sgsr->Execute(m_sgsrCmdList, params);
+            m_sgsrCmdList->Close();
 
-            // Execute WITHOUT blocking fence wait — fire and forget
-            ID3D12CommandList* lists[] = { cmdList };
+            ID3D12CommandList* lists[] = { m_sgsrCmdList };
             m_cmdQueue->ExecuteCommandLists(1, lists);
 
-            cmdList->Release();
-            cmdAlloc->Release();
+            // Signal fence so next frame waits for completion
+            m_sgsrFenceVal++;
+            m_cmdQueue->Signal(m_sgsrFence, m_sgsrFenceVal);
+
             backbuffer->Release();
         }
     }
@@ -352,11 +379,14 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
     }
 
     // ── ImGui Overlay (drawn ONCE, on the final real backbuffer) ──
-    if (needOverlay && m_overlay && m_overlay->IsVisible()) {
+    // Render whenever needOverlay is true (FPS counter or menu visible).
+    // OverlayMenu::Render internally handles m_visible for the menu,
+    // and RenderHUD always draws the FPS counter when fps_display is on.
+    if (needOverlay && m_overlay && m_cmdQueue) {
         ID3D12Resource* bb = nullptr;
         if (SUCCEEDED(m_real->GetBuffer(m_real->GetCurrentBackBufferIndex(),
             IID_ID3D12Resource, (void**)&bb))) {
-            m_overlay->Render(nullptr, bb, m_width, m_height);
+            m_overlay->Render(m_cmdQueue, bb, m_width, m_height);
             bb->Release();
         }
     }

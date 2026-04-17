@@ -1,14 +1,14 @@
 set(CORE_SOURCES
-    src/config.cpp
-    src/logger.cpp
-    src/gpu_detect.cpp
-    src/shared_state.cpp
-    src/sgsr1_pass.cpp
-    src/overlay_menu.cpp
+    scr/config.cpp
+    scr/logger.cpp
+    scr/gpu_detect.cpp
+    scr/shared_state.cpp
+    scr/sgsr1_pass.cpp
+    scr/overlay_menu.cpp
 )
 
 if(ADRENA_ENABLE_SGSR2)
-    list(APPEND CORE_SOURCES src/sgsr2_pass.cpp)
+    list(APPEND CORE_SOURCES scr/sgsr2_pass.cpp)
 endif()
 
 add_library(adrena_core STATIC ${CORE_SOURCES})
@@ -27,7 +27,7 @@ target_compile_definitions(adrena_core PRIVATE
 )
 
 if(ADRENA_ENABLE_LOGGING)
-    target_compile_definitions(adrena_core PRIVATE ADRENA_LOGGING_ENABLED)
+    target_compile_definitions(adrena_core PUBLIC ADRENA_LOGGING_ENABLED)
 endif()
 
 if(ADRENA_ENABLE_SGSR2)
@@ -35,9 +35,9 @@ if(ADRENA_ENABLE_SGSR2)
 endif()
 
 if(ADRENA_ENABLE_OVERLAY)
-    target_compile_definitions(adrena_core PRIVATE ADRENA_OVERLAY_ENABLED)
+    target_compile_definitions(adrena_core PUBLIC ADRENA_OVERLAY_ENABLED)
     if(MSVC)
-        target_compile_definitions(adrena_core PRIVATE ADRENA_DX12_OVERLAY=1)
+        target_compile_definitions(adrena_core PUBLIC ADRENA_DX12_OVERLAY=1)
     endif()
 endif()
 

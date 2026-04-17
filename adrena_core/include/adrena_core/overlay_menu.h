@@ -4,6 +4,7 @@
 
 struct ID3D12Device;
 struct ID3D12GraphicsCommandList;
+struct ID3D12CommandQueue;
 struct IDXGISwapChain3;
 
 namespace adrena {
@@ -19,7 +20,7 @@ public:
     bool InitDX12(ID3D12Device* device, DXGI_FORMAT rtvFormat);
     void Shutdown();
 
-    void Render(ID3D12GraphicsCommandList* cmdList,
+    void Render(ID3D12CommandQueue* cmdQueue,
                 ID3D12Resource* backbuffer,
                 uint32_t width, uint32_t height);
 
