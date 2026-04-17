@@ -120,8 +120,13 @@ HRESULT ProxySwapChain::GetDevice(REFIID r, void** p) { return m_real->GetDevice
 
 HRESULT ProxySwapChain::GetBuffer(UINT idx, REFIID riid, void** ppBuf) {
     auto& cfg = GetConfig();
+    // D3D11: redirect game to low-res render target
     if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_lowresRT11 && riid == __uuidof(ID3D11Texture2D)) {
         return m_lowresRT11->QueryInterface(riid, ppBuf);
+    }
+    // D3D12: redirect game to low-res render target
+    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_lowresRT12 && riid == __uuidof(ID3D12Resource)) {
+        return m_lowresRT12->QueryInterface(riid, ppBuf);
     }
     return m_real->GetBuffer(idx, riid, ppBuf);
 }
@@ -194,58 +199,77 @@ void ProxySwapChain::InitD3D12Compute() {
     D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {}; heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heapDesc.NumDescriptors = 2; heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     m_d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_computeHeap));
 
-    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_displayWidth; texDesc.Height = m_displayHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    // Intermediate texture at render (low-res) dimensions for SGSR input
+    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_renderWidth; texDesc.Height = m_renderHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
     D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
     m_d3d12Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_intermediateTex));
 
     m_d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)); m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-    AD_LOG_I("D3D12 Compute Pipeline initialized! (%ux%u fmt=%u)", m_displayWidth, m_displayHeight, m_format);
+    AD_LOG_I("D3D12 Compute Pipeline initialized! (%ux%u -> %ux%u fmt=%u)", m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight, m_format);
 }
 
 void ProxySwapChain::ExecuteD3D12Compute() {
+    // Sync: wait for GPU to finish previous frame
     m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
     if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
 
     m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_computePSO);
+
+    // Source: m_lowresRT12 (game rendered here via GetBuffer redirect)
+    // Destination: real backbuffer at display resolution
     ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex(); m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
 
+    // Transition lowresRT12: RENDER_TARGET -> COPY_SOURCE
+    // Transition intermediateTex: NON_PIXEL_SHADER_RESOURCE -> COPY_DEST
     D3D12_RESOURCE_BARRIER barriers[2] = {};
-    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
-    m_cmdList->ResourceBarrier(2, barriers);
-    m_cmdList->CopyResource(m_intermediateTex, backBuffer);
-
-    barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
-    barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = m_lowresRT12; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_intermediateTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     m_cmdList->ResourceBarrier(2, barriers);
 
+    // Copy low-res game output into intermediate texture (SGSR SRV input)
+    m_cmdList->CopyResource(m_intermediateTex, m_lowresRT12);
+
+    // Transition intermediateTex: COPY_DEST -> SRV, backBuffer: PRESENT -> UAV
+    barriers[0].Transition.pResource = m_intermediateTex; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    barriers[1].Transition.pResource = backBuffer; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+    m_cmdList->ResourceBarrier(2, barriers);
+
+    // Create descriptors
     UINT descSize = m_d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_CPU_DESCRIPTOR_HANDLE hCPU = m_computeHeap->GetCPUDescriptorHandleForHeapStart();
     D3D12_GPU_DESCRIPTOR_HANDLE hGPU = m_computeHeap->GetGPUDescriptorHandleForHeapStart();
+
+    // SRV: intermediate (low-res input)
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; srvDesc.Format = m_format; srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1; srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     m_d3d12Device->CreateShaderResourceView(m_intermediateTex, &srvDesc, hCPU); hCPU.ptr += descSize;
+
+    // UAV: backbuffer (full-res output)
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {}; uavDesc.Format = m_format; uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     m_d3d12Device->CreateUnorderedAccessView(backBuffer, nullptr, &uavDesc, hCPU);
 
+    // Dispatch compute
     ID3D12DescriptorHeap* heaps[] = { m_computeHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
     m_cmdList->SetComputeRootSignature(m_rootSig);
-    uint32_t constants[4] = { m_displayWidth, m_displayHeight, m_displayWidth, m_displayHeight }; // 1:1 pass-through
+    // constants: [renderW, renderH, displayW, displayH] — actual upscaling dimensions
+    uint32_t constants[4] = { m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight };
     m_cmdList->SetComputeRoot32BitConstants(0, 4, constants, 0);
     m_cmdList->SetComputeRootDescriptorTable(1, hGPU);
     m_cmdList->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{ hGPU.ptr + descSize });
     m_cmdList->Dispatch((m_displayWidth + 7) / 8, (m_displayHeight + 7) / 8, 1);
 
-    D3D12_RESOURCE_BARRIER finalBarrier = {}; finalBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; finalBarrier.Transition.pResource = backBuffer; finalBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; finalBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-    m_cmdList->ResourceBarrier(1, &finalBarrier);
-    m_cmdList->Close();
+    // Transition backBuffer: UAV -> PRESENT, lowresRT12: COPY_SOURCE -> RENDER_TARGET
+    barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    barriers[1].Transition.pResource = m_lowresRT12; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    m_cmdList->ResourceBarrier(2, barriers);
 
+    m_cmdList->Close();
     ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
     m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
     backBuffer->Release();
 }
 
 void ProxySwapChain::ProcessSGSR12() {
-    if (!m_d3d12Device || !m_commandQueue) return;
+    if (!m_d3d12Device || !m_commandQueue || !m_lowresRT12) return;
     if (!m_computePSO) InitD3D12Compute();
     if (!m_computePSO) return;
     if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
@@ -284,11 +308,33 @@ void ProxySwapChain::SetupResources() {
         rtDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         m_d3d11Device->CreateTexture2D(&rtDesc, nullptr, &m_lowresRT11);
     }
+
+    if (m_isD3D12 && m_d3d12Device) {
+        D3D12_RESOURCE_DESC rtDesc = {};
+        rtDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        rtDesc.Width = m_renderWidth; rtDesc.Height = m_renderHeight;
+        rtDesc.DepthOrArraySize = 1; rtDesc.MipLevels = 1;
+        rtDesc.Format = m_format; rtDesc.SampleDesc = { 1, 0 };
+        rtDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET | D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_CLEAR_VALUE clearVal = {}; clearVal.Format = m_format;
+        HRESULT hr = m_d3d12Device->CreateCommittedResource(
+            &heapProps, D3D12_HEAP_FLAG_NONE, &rtDesc,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, &clearVal,
+            IID_PPV_ARGS(&m_lowresRT12));
+        if (FAILED(hr)) {
+            AD_LOG_E("Failed to create D3D12 low-res render target (hr=0x%X)", hr);
+        } else {
+            AD_LOG_I("D3D12 low-res RT created (%ux%u)", m_renderWidth, m_renderHeight);
+        }
+    }
+
     m_initialized = true;
 }
 
 void ProxySwapChain::TeardownResources() {
     if (m_lowresRT11) { m_lowresRT11->Release(); m_lowresRT11 = nullptr; }
+    if (m_lowresRT12) { m_lowresRT12->Release(); m_lowresRT12 = nullptr; }
     m_initialized = false;
 }
 

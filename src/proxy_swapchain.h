@@ -103,7 +103,11 @@ private:
     HWND                m_hwnd = nullptr;
     static WNDPROC      s_origWndProc;
 
+    // D3D11 low-res render target
     ID3D11Texture2D*    m_lowresRT11 = nullptr;
+    // D3D12 low-res render target (game renders here, SGSR upscales to backbuffer)
+    ID3D12Resource*     m_lowresRT12 = nullptr;
+
     UINT                m_renderWidth = 0, m_renderHeight = 0;
     UINT                m_displayWidth = 0, m_displayHeight = 0;
     DXGI_FORMAT         m_format = DXGI_FORMAT_UNKNOWN;
