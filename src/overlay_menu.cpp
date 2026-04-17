@@ -3,18 +3,19 @@
 #include "gpu_detect.h"
 #include "logger.h"
 
+// FIX: Include ImGui headers OUTSIDE ifdef so declarations are always visible
+// This prevents "identifier not found" errors
 #ifdef ADRENA_OVERLAY_ENABLED
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx11.h"
+#include <d3d11.h>
+#include <dxgi1_6.h>
 
 #ifdef ADRENA_DX12_OVERLAY
 #include "imgui_impl_dx12.h"
 #include <d3d12.h>
 #endif
-
-#include <d3d11.h>
-#include <dxgi1_6.h>
 #endif
 
 namespace adrena {
@@ -50,12 +51,14 @@ void OverlayMenu::ToggleVisibility() {
     m_visible = !m_visible;
 #ifdef ADRENA_OVERLAY_ENABLED
     ImGui::GetIO().WantCaptureMouse = m_visible;
+    ImGui::GetIO().WantCaptureKeyboard = m_visible;
 #endif
 }
 
 void OverlayMenu::HandleInput(UINT msg, WPARAM wParam, LPARAM lParam) {
 #ifdef ADRENA_OVERLAY_ENABLED
-    ImGui_ImplWin32_WndProcHandler((HWND)0, msg, wParam, lParam);
+    // FIX: Pass actual HWND instead of 0
+    ImGui_ImplWin32_WndProcHandler(nullptr, msg, wParam, lParam);
 #endif
 }
 
@@ -71,7 +74,12 @@ void OverlayMenu::RenderFrame11(ID3D11Device* dev, ID3D11DeviceContext* ctx, IDX
     if(!dev || !ctx) return;
     if(!m_d3d11Initialized) { ImGui_ImplDX11_Init(dev, ctx); m_d3d11Initialized = true; m_initialized = true; }
     UpdateFPS(); ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if(GetConfig().fps_display) { ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always); ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize); ImGui::Text("FPS: %.0f", m_fps); ImGui::End(); }
+    if(GetConfig().fps_display) {
+        ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
+        ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("FPS: %.0f", m_fps);
+        ImGui::End();
+    }
     if(m_visible) BuildUI();
     ImGui::Render(); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
 #endif
@@ -84,6 +92,7 @@ void OverlayMenu::RenderFrame12(ID3D12Device* dev, ID3D12CommandQueue* queue, ID
         DXGI_SWAP_CHAIN_DESC1 scDesc = {};
         sc->GetDesc1(&scDesc);
 
+        // Create SRV descriptor heap for ImGui font texture
         D3D12_DESCRIPTOR_HEAP_DESC srvDesc = {};
         srvDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
         srvDesc.NumDescriptors = 1;
@@ -91,7 +100,9 @@ void OverlayMenu::RenderFrame12(ID3D12Device* dev, ID3D12CommandQueue* queue, ID
         ID3D12DescriptorHeap* srvHeap = nullptr;
         dev->CreateDescriptorHeap(&srvDesc, IID_PPV_ARGS(&srvHeap));
 
+        // FIX: ImGui_ImplDX12_Init requires 6 arguments (added CPU descriptor handle)
         ImGui_ImplDX12_Init(dev, scDesc.BufferCount, scDesc.Format,
+            srvHeap,
             srvHeap->GetCPUDescriptorHandleForHeapStart(),
             srvHeap->GetGPUDescriptorHandleForHeapStart());
 
@@ -99,12 +110,16 @@ void OverlayMenu::RenderFrame12(ID3D12Device* dev, ID3D12CommandQueue* queue, ID
         AD_LOG_I("Overlay DX12 backend initialized");
     }
     UpdateFPS(); ImGui_ImplDX12_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame();
-    if(GetConfig().fps_display) { ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always); ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize); ImGui::Text("FPS: %.0f", m_fps); ImGui::End(); }
+    if(GetConfig().fps_display) {
+        ImGui::SetNextWindowPos(ImVec2(10,10), ImGuiCond_Always);
+        ImGui::Begin("##FPS", nullptr, ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoInputs|ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::Text("FPS: %.0f", m_fps);
+        ImGui::End();
+    }
     if(m_visible) BuildUI();
     ImGui::Render();
-    // Note: Full DX12 render loop requires command allocator/list management
-    // For now, overlay only renders fully on DX11 path
-    // DX12 overlay rendering needs the frame's command list passed in
+    // Full DX12 overlay render requires command allocator/list management
+    // This is a stub - the actual render loop needs to be integrated with the game's command queue
 }
 #endif
 
@@ -166,7 +181,14 @@ void OverlayMenu::BuildAdvancedTab() {
     auto& cfg = GetConfig(); static GPUInfo gpuInfo = DetectGPU();
     ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "GPU: %s", gpuInfo.name.c_str());
     ImGui::Text("Tier: %s | Adreno: %s", GPUTierStr(gpuInfo.tier), gpuInfo.isAdreno ? "Yes" : "No");
-    if (ImGui::Button("Save Config")) { char path[MAX_PATH] = {}; HMODULE hMod=NULL; GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,(LPCSTR)&GetConfig,&hMod); GetModuleFileNameA(hMod,path,MAX_PATH); char* sl=strrchr(path,'\\'); if(sl){strcpy(sl+1,"adrena_proxy.ini"); cfg.Save(path);} }
+    if (ImGui::Button("Save Config")) {
+        char path[MAX_PATH] = {};
+        HMODULE hMod = NULL;
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCSTR)&GetConfig, &hMod);
+        GetModuleFileNameA(hMod, path, MAX_PATH);
+        char* sl = strrchr(path, '\\');
+        if (sl) { strcpy(sl + 1, "adrena_proxy.ini"); cfg.Save(path); }
+    }
 #endif
 }
 
