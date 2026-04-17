@@ -45,6 +45,7 @@ jobs:
       run: |
         mkdir -p dist
         cp build/dxgi.dll dist/
+        cp build/dlss.dll dist/
         cp adrena_proxy.ini dist/
         cp README.md dist/
         cp LICENSE dist/
@@ -78,6 +79,7 @@ jobs:
       run: |
         mkdir dist
         copy build\Release\dxgi.dll dist\
+        copy build\Release\dlss.dll dist\
         copy adrena_proxy.ini dist\
         copy README.md dist\
         copy LICENSE dist\
