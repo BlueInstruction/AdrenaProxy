@@ -1,9 +1,13 @@
+LIBRARY dxgi
 EXPORTS
     CreateDXGIFactory
     CreateDXGIFactory1
     CreateDXGIFactory2
-    DXGID3D10CreateDevice
-    DXGID3D10CreateDeviceAndSwapChain
-    DXGID3D10RegisterLayers
-    DXGIGetDebugInterface1
+    DXGIDumpJournal
     DXGIReportAdapterConfiguration
+    PIXBeginCapture
+    PIXEndCapture
+    PIXGetCaptureState
+    DXGIGetDebugInterface1
+    SetAppCompatStringPointer
+    UpdateDxgiUmSurfObject
