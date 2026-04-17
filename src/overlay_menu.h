@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <cstdint>
+#include <dxgi.h>
 
 struct IDXGISwapChain1;
 struct ID3D11Device;

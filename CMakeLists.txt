@@ -34,7 +34,10 @@ if(ADRENA_ENABLE_OVERLAY)
         ${imgui_SOURCE_DIR}/backends/imgui_impl_dx11.cpp
     )
 
-    list(APPEND IMGUI_SOURCES ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+    # DX12 overlay backend only for MSVC (MinGW headers lack PFN_D3D12_SERIALIZE_ROOT_SIGNATURE)
+    if(MSVC)
+        list(APPEND IMGUI_SOURCES ${imgui_SOURCE_DIR}/backends/imgui_impl_dx12.cpp)
+    endif()
 
     add_library(imgui_lib STATIC ${IMGUI_SOURCES})
     target_include_directories(imgui_lib PUBLIC
@@ -98,8 +101,8 @@ if(ADRENA_ENABLE_FG)
     target_compile_definitions(adxgi PUBLIC ADRENA_FG_ENABLED)
 endif()
 
-# DX12 overlay for both MSVC and MinGW
-if(ADRENA_ENABLE_OVERLAY)
+# DX12 overlay only on MSVC (MinGW lacks PFN_D3D12_SERIALIZE_ROOT_SIGNATURE in headers)
+if(MSVC AND ADRENA_ENABLE_OVERLAY)
     target_compile_definitions(adxgi PRIVATE ADRENA_DX12_OVERLAY=1)
 endif()
 
