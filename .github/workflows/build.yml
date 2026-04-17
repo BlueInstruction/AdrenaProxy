@@ -13,6 +13,9 @@ env:
 jobs:
   build-mingw:
     runs-on: ubuntu-latest
+    # MinGW build is compile-check only — the DLL does not work in Wine/Proton
+    # due to MinGW C++ runtime incompatibilities. Use the MSVC build for deployment.
+    continue-on-error: true
     steps:
     - uses: actions/checkout@v4
       with:
@@ -33,7 +36,7 @@ jobs:
           -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
           -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++ \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-          -DADRENA_ENABLE_LOGGING=OFF
+          -DADRENA_ENABLE_LOGGING=ON
 
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }}
@@ -66,7 +69,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -G "Visual Studio 17 2022" -A x64 -DADRENA_ENABLE_LOGGING=OFF
+        cmake .. -G "Visual Studio 17 2022" -A x64 -DADRENA_ENABLE_LOGGING=ON
 
     - name: Build
       run: cmake --build build --config Release
@@ -85,7 +88,7 @@ jobs:
         path: dist/
 
   release:
-    needs: [build-mingw, build-msvc]
+    needs: [build-msvc]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:

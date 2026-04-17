@@ -1,0 +1,62 @@
+#pragma once
+#include <dxgi1_6.h>
+#include "proxy_swapchain.h"
+
+namespace adrena {
+
+class ProxyFactory : public IDXGIFactory6 {
+public:
+    ProxyFactory(IDXGIFactory6* real);
+    ~ProxyFactory();
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppvObject) override;
+    ULONG   STDMETHODCALLTYPE AddRef() override;
+    ULONG   STDMETHODCALLTYPE Release() override;
+
+    HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID, UINT, const void*) override;
+    HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID, const IUnknown*) override;
+    HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT*, void*) override;
+    HRESULT STDMETHODCALLTYPE GetParent(REFIID, void**) override;
+
+    HRESULT STDMETHODCALLTYPE EnumAdapters(UINT, IDXGIAdapter**) override;
+    HRESULT STDMETHODCALLTYPE MakeWindowAssociation(HWND, UINT) override;
+    HRESULT STDMETHODCALLTYPE GetWindowAssociation(HWND*) override;
+    HRESULT STDMETHODCALLTYPE CreateSwapChain(IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**) override;
+    // FIX: UINT → HMODULE
+    HRESULT STDMETHODCALLTYPE CreateSoftwareAdapter(HMODULE, IDXGIAdapter**) override;
+
+    HRESULT STDMETHODCALLTYPE EnumAdapters1(UINT, IDXGIAdapter1**) override;
+    BOOL    STDMETHODCALLTYPE IsCurrent() override;
+
+    BOOL    STDMETHODCALLTYPE IsWindowedStereoEnabled() override;
+    HRESULT STDMETHODCALLTYPE CreateSwapChainForHwnd(IUnknown*, HWND, const DXGI_SWAP_CHAIN_DESC1*,
+                    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*, IDXGIOutput*, IDXGISwapChain1**) override;
+    HRESULT STDMETHODCALLTYPE CreateSwapChainForCoreWindow(IUnknown*, IUnknown*, const DXGI_SWAP_CHAIN_DESC1*,
+                    IDXGIOutput*, IDXGISwapChain1**) override;
+    HRESULT STDMETHODCALLTYPE GetSharedResourceAdapterLuid(HANDLE, LUID*) override;
+    HRESULT STDMETHODCALLTYPE RegisterStereoStatusWindow(HWND, UINT, DWORD*) override;
+    HRESULT STDMETHODCALLTYPE RegisterStereoStatusEvent(HANDLE, DWORD*) override;
+    // FIX: HRESULT → void
+    void    STDMETHODCALLTYPE UnregisterStereoStatus(DWORD) override;
+    HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusWindow(HWND, UINT, DWORD*) override;
+    HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusEvent(HANDLE, DWORD*) override;
+    // FIX: HRESULT → void
+    void    STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD) override;
+    HRESULT STDMETHODCALLTYPE CreateSwapChainForComposition(IUnknown*, const DXGI_SWAP_CHAIN_DESC1*,
+                    IDXGIOutput*, IDXGISwapChain1**) override;
+
+    UINT    STDMETHODCALLTYPE GetCreationFlags() override;
+    HRESULT STDMETHODCALLTYPE EnumAdapterByLuid(LUID, REFIID, void**) override;
+    HRESULT STDMETHODCALLTYPE EnumWarpAdapter(REFIID, void**) override;
+    HRESULT STDMETHODCALLTYPE CheckFeatureSupport(DXGI_FEATURE, void*, UINT) override;
+    HRESULT STDMETHODCALLTYPE EnumAdapterByGpuPreference(UINT, DXGI_GPU_PREFERENCE, REFIID, void**) override;
+
+    IDXGIFactory6* GetReal() const { return m_real; }
+
+private:
+    IDXGIFactory6* m_real;
+    ULONG m_refCount = 1;
+    HRESULT WrapSwapChain(IUnknown* pDevice, IDXGISwapChain1* realSC, IDXGISwapChain1** ppSC);
+};
+
+} // namespace adrena
