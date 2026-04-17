@@ -135,6 +135,7 @@ HRESULT ProxySwapChain::Present(UINT SyncInterval, UINT Flags) { return HookPres
 HRESULT ProxySwapChain::Present1(UINT SyncInterval, UINT Flags, const DXGI_PRESENT_PARAMETERS*) { return HookPresent(SyncInterval, Flags); }
 
 HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
+    static UINT s_frameCount = 0;
     auto& cfg = GetConfig();
 
     // Hook window on first present
@@ -145,12 +146,23 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
         }
     }
 
+    bool sgsrActive = false;
     if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_initialized) {
         if (m_isD3D12) ProcessSGSR12(); else ProcessSGSR11();
+        sgsrActive = true;
     }
 #ifdef ADRENA_OVERLAY_ENABLED
     if (cfg.overlay_enabled && m_hwnd) RenderOverlay();
 #endif
+
+    // Log every 300 frames to confirm Present is being called and SGSR is dispatching
+    s_frameCount++;
+    if (s_frameCount % 300 == 1) {
+        AD_LOG_I("Present #%u | SGSR=%s | D3D12=%s | fence=%llu",
+                 s_frameCount, sgsrActive ? "ON" : "OFF",
+                 m_isD3D12 ? "yes" : "no", m_fenceValue);
+    }
+
     return m_real->Present(SyncInterval, Flags);
 }
 
