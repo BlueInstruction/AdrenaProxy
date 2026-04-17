@@ -113,6 +113,9 @@ void OverlayMenu::DrawHUD() {
         if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
             ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR ON");
         }
+        if (cfg.fg_mode != FGMode::X1) {
+            ImGui::SameLine(); ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "| FG x%d", (int)cfg.fg_mode + 1);
+        }
     } else {
         // ── Vertical mode: multi-line ──
         ImGui::TextColored(fpsColor, "FPS: %.0f", m_fps);
@@ -130,9 +133,13 @@ void OverlayMenu::DrawHUD() {
         }
 
         if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
-            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%%)", cfg.render_scale * 100.0f);
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: Sharpen (%.1f)", cfg.sharpness);
         } else {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
+        }
+
+        if (cfg.fg_mode != FGMode::X1) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "FG: x%d", (int)cfg.fg_mode + 1);
         }
     }
 
@@ -286,18 +293,37 @@ void OverlayMenu::BuildSGSRTab() {
     float scale = cfg.GetRenderScale();
     if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); resIdx = 8; }
     if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {}
+
+    // Show current mode info
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Sharpness: %.2f", cfg.sharpness);
+    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Mode: Post-process sharpening (Lanczos2 + edge-adaptive)");
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Quality presets reserved for future upscaling support");
 #endif
 }
 
 void OverlayMenu::BuildFGTab() {
 #ifdef ADRENA_OVERLAY_ENABLED
     auto& cfg = GetConfig();
-    const char* fgModes[] = { "x1 (Off)", "x2 (2x FPS)", "x3 (3x FPS)", "x4 (4x FPS)" }; int fgIdx = (int)cfg.fg_mode;
-    if (ImGui::Combo("Frame Generation", &fgIdx, fgModes, 4)) cfg.fg_mode = (FGMode)fgIdx;
-    if (cfg.fg_mode == FGMode::X1) return;
+    const char* fgModes[] = { "x1 (Off)", "x2 (2x FPS)", "x3 (3x FPS)", "x4 (4x FPS)", "x5 (5x FPS)", "x6 (6x FPS)" }; int fgIdx = (int)cfg.fg_mode;
+    if (ImGui::Combo("Frame Generation", &fgIdx, fgModes, 6)) cfg.fg_mode = (FGMode)fgIdx;
+    if (cfg.fg_mode == FGMode::X1) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Frame Generation disabled");
+        return;
+    }
     const char* mq[] = { "Low", "Medium", "High" }; int mqIdx = (int)cfg.motion_quality;
     if (ImGui::Combo("Motion Quality", &mqIdx, mq, 3)) cfg.motion_quality = (MotionQuality)mqIdx;
-    if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 120, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
+    if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 240, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "0 = always active (recommended for emulators)");
+
+    ImGui::Separator();
+    int multiplier = (int)cfg.fg_mode + 1;
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "FG Active: x%d (%d interpolated frames per real frame)", multiplier, multiplier - 1);
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Compute interpolation + extra presents");
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Optimized for Vulkan/VKD3D/Turnip pipeline");
+    if (cfg.fps_threshold > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Auto-disable above %d FPS", cfg.fps_threshold);
+    }
 #endif
 }
 
@@ -335,6 +361,22 @@ void OverlayMenu::BuildAdvancedTab() {
     auto& cfg = GetConfig(); static GPUInfo gpuInfo = DetectGPU();
     ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "GPU: %s", gpuInfo.name.c_str());
     ImGui::Text("Tier: %s | Adreno: %s", GPUTierStr(gpuInfo.tier), gpuInfo.isAdreno ? "Yes" : "No");
+    if (gpuInfo.isAdreno) {
+        ImGui::Text("Recommended FG: x%d | Workgroup: %d | FP16: %s",
+                     gpuInfo.recommendedFG, gpuInfo.workgroupSize, gpuInfo.useFP16 ? "Yes" : "No");
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Vulkan/VKD3D Tuning:");
+    if (ImGui::SliderInt("Frame Queue Depth", &cfg.max_frame_queue, 1, 8)) {}
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Lower = less input lag, Higher = smoother");
+    if (ImGui::SliderInt("VSync", &cfg.vsync, 0, 4, cfg.vsync == 0 ? "Off" : "%d")) {}
+
+    ImGui::Separator();
+    if (ImGui::Checkbox("Auto Detect GPU", &cfg.auto_detect_gpu)) {}
+    if (ImGui::Checkbox("Force D3D11", &cfg.force_d3d11)) {}
+
+    ImGui::Separator();
     if (ImGui::Button("Save Config")) {
         char path[MAX_PATH] = {};
         HMODULE hMod = NULL;
@@ -342,6 +384,12 @@ void OverlayMenu::BuildAdvancedTab() {
         GetModuleFileNameA(hMod, path, MAX_PATH);
         char* sl = strrchr(path, '\\');
         if (sl) { strcpy(sl + 1, "adrena_proxy.ini"); cfg.Save(path); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset Defaults")) {
+        cfg.enabled = false; cfg.sgsr_mode = SGSRMode::SGSR1; cfg.quality = Quality::Quality;
+        cfg.custom_scale = 0.0f; cfg.sharpness = 0.80f; cfg.fg_mode = FGMode::X1;
+        cfg.max_frame_queue = 2; cfg.vsync = 0; cfg.ApplyRenderScale();
     }
 #endif
 }

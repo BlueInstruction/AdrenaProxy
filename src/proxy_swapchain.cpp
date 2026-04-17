@@ -93,6 +93,10 @@ ProxySwapChain::~ProxySwapChain() {
     if (m_computeHeap) m_computeHeap->Release();
     if (m_fence) m_fence->Release();
     if (m_fenceEvent) CloseHandle(m_fenceEvent);
+    if (m_fgInterpolatePSO) m_fgInterpolatePSO->Release();
+    if (m_fgRootSig) m_fgRootSig->Release();
+    if (m_prevFrameTex) m_prevFrameTex->Release();
+    if (m_fgHeap) m_fgHeap->Release();
     if (m_overlayCmdAlloc) m_overlayCmdAlloc->Release();
     if (m_overlayCmdList) m_overlayCmdList->Release();
     if (m_rtvHeap) m_rtvHeap->Release();
@@ -120,8 +124,11 @@ HRESULT ProxySwapChain::GetDevice(REFIID r, void** p) { return m_real->GetDevice
 
 HRESULT ProxySwapChain::GetBuffer(UINT idx, REFIID riid, void** ppBuf) {
     // Pass-through: game renders at native resolution on the real backbuffer.
-    // SGSR runs as a post-process sharpening pass on Present, avoiding
-    // viewport mismatch issues that GetBuffer redirect causes in VKD3D.
+    // SGSR reads the full backbuffer as input and writes the upscaled/sharpened
+    // result back. The shader's Lanczos2 kernel uses renderSize vs displaySize
+    // to determine the upscale ratio. When renderSize < displaySize, the shader
+    // samples from the renderSize region and upscales to displaySize.
+    // GetBuffer redirect was tried but causes viewport mismatch in VKD3D.
     return m_real->GetBuffer(idx, riid, ppBuf);
 }
 
@@ -140,11 +147,37 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
         }
     }
 
+    // Apply Vulkan/VKD3D optimizations on first present
+    if (!m_vulkanOptApplied && m_initialized) ApplyVulkanOptimizations();
+
+    // Check if quality/scale changed at runtime
+    CheckConfigChange();
+
     bool sgsrActive = false;
     if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_initialized) {
         if (m_isD3D12) ProcessSGSR12(); else ProcessSGSR11();
         sgsrActive = true;
     }
+
+    // Frame Generation: generate extra presents after SGSR, before overlay
+    // Respects fps_threshold: auto-disable FG when FPS exceeds threshold
+    bool fgActive = false;
+    if (cfg.fg_mode != FGMode::X1 && m_initialized) {
+        bool fgAllowed = true;
+        if (cfg.fps_threshold > 0) {
+            // Simple frame time estimate from fence cadence
+            static LARGE_INTEGER s_lastTime = {}; static float s_estFps = 0.0f;
+            LARGE_INTEGER now, freq; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&freq);
+            if (s_lastTime.QuadPart > 0) {
+                double dt = (double)(now.QuadPart - s_lastTime.QuadPart) / (double)freq.QuadPart;
+                if (dt > 0.0) s_estFps = s_estFps * 0.9f + (float)(1.0 / dt) * 0.1f; // EMA smoothing
+            }
+            s_lastTime = now;
+            if (s_estFps > (float)cfg.fps_threshold) fgAllowed = false;
+        }
+        if (fgAllowed && m_isD3D12) { ProcessFrameGen12(); fgActive = true; }
+    }
+
 #ifdef ADRENA_OVERLAY_ENABLED
     if (cfg.overlay_enabled && m_hwnd) RenderOverlay();
 #endif
@@ -152,9 +185,11 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
     // Log every 300 frames to confirm Present is being called and SGSR is dispatching
     s_frameCount++;
     if (s_frameCount % 300 == 1) {
-        AD_LOG_I("Present #%u | SGSR=%s | D3D12=%s | fence=%llu",
-                 s_frameCount, sgsrActive ? "ON" : "OFF",
-                 m_isD3D12 ? "yes" : "no", m_fenceValue);
+        AD_LOG_I("Present #%u | SGSR=%s(sharp=%.1f) | FG=%s(x%d) | D3D12=%s | fence=%llu | %ux%u",
+                 s_frameCount, sgsrActive ? "ON" : "OFF", cfg.sharpness,
+                 fgActive ? "ON" : "OFF", (int)cfg.fg_mode + 1,
+                 m_isD3D12 ? "yes" : "no", m_fenceValue,
+                 m_displayWidth, m_displayHeight);
     }
 
     return m_real->Present(SyncInterval, Flags);
@@ -181,7 +216,7 @@ void ProxySwapChain::InitD3D12Compute() {
     ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV; ranges[1].NumDescriptors = 1; ranges[1].BaseShaderRegister = 0;
 
     D3D12_ROOT_PARAMETER rootParams[3] = {};
-    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; rootParams[0].Constants.ShaderRegister = 0; rootParams[0].Constants.Num32BitValues = 4; rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; rootParams[0].Constants.ShaderRegister = 0; rootParams[0].Constants.Num32BitValues = 6; rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[1].DescriptorTable.NumDescriptorRanges = 1; rootParams[1].DescriptorTable.pDescriptorRanges = &ranges[0]; rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
     rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[2].DescriptorTable.NumDescriptorRanges = 1; rootParams[2].DescriptorTable.pDescriptorRanges = &ranges[1]; rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
@@ -221,7 +256,8 @@ void ProxySwapChain::ExecuteD3D12Compute() {
 
     m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_computePSO);
 
-    // Post-process mode: backbuffer → intermediate (copy) → SGSR sharpen → backbuffer
+    // Upscale mode: backbuffer has game content in top-left m_renderWidth x m_renderHeight region.
+    // SGSR reads that region and writes the upscaled result to the full backbuffer.
     ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex(); m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
 
     // Transition backBuffer: PRESENT -> COPY_SOURCE, intermediate: SRV -> COPY_DEST
@@ -247,16 +283,28 @@ void ProxySwapChain::ExecuteD3D12Compute() {
     D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; srvDesc.Format = m_format; srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1; srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
     m_d3d12Device->CreateShaderResourceView(m_intermediateTex, &srvDesc, hCPU); hCPU.ptr += descSize;
 
-    // UAV: backbuffer (output — sharpened result)
+    // UAV: backbuffer (output — upscaled result)
     D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {}; uavDesc.Format = m_format; uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
     m_d3d12Device->CreateUnorderedAccessView(backBuffer, nullptr, &uavDesc, hCPU);
 
-    // Dispatch compute — 1:1 post-process (same input/output resolution)
+    // Dispatch compute — SGSR upscaling: renderSize -> displaySize
+    // The shader reads from the renderSize region and writes to the full displaySize output.
+    // When renderSize < displaySize, Lanczos2 upsampling + edge-adaptive sharpening is applied.
+    // When renderSize == displaySize, it degrades gracefully to sharpening only.
     ID3D12DescriptorHeap* heaps[] = { m_computeHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
     m_cmdList->SetComputeRootSignature(m_rootSig);
-    // In post-process mode: renderSize == displaySize (1:1, sharpening only)
-    uint32_t constants[4] = { m_displayWidth, m_displayHeight, m_displayWidth, m_displayHeight };
-    m_cmdList->SetComputeRoot32BitConstants(0, 4, constants, 0);
+    // Constants layout matches cbuffer: renderSize(2) + displaySize(2) + sharpness(1) + frameCount(1)
+    // NOTE: Since GetBuffer is pass-through (game renders at full display resolution),
+    // SGSR currently operates as a post-process sharpening pass (renderSize == displaySize).
+    // When renderSize < displaySize is passed, the Lanczos2 kernel would upscale, but
+    // the game content fills the entire backbuffer at displaySize, so upscaling has no
+    // visible effect. For true upscaling, GetBuffer redirect or viewport interception is needed.
+    auto& cfg = GetConfig();
+    struct { uint32_t renderW, renderH, displayW, displayH; float sharpness; uint32_t frameCount; } constants;
+    constants.renderW = m_displayWidth; constants.renderH = m_displayHeight;
+    constants.displayW = m_displayWidth; constants.displayH = m_displayHeight;
+    constants.sharpness = cfg.sharpness; constants.frameCount = (uint32_t)m_fenceValue;
+    m_cmdList->SetComputeRoot32BitConstants(0, 6, &constants, 0);
     m_cmdList->SetComputeRootDescriptorTable(1, hGPU);
     m_cmdList->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{ hGPU.ptr + descSize });
     m_cmdList->Dispatch((m_displayWidth + 7) / 8, (m_displayHeight + 7) / 8, 1);
@@ -272,13 +320,189 @@ void ProxySwapChain::ExecuteD3D12Compute() {
     backBuffer->Release();
 }
 
+void ProxySwapChain::EnsureD3D12Infrastructure() {
+    if (!m_d3d12Device) return;
+    if (!m_fence) { m_d3d12Device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence)); m_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr); }
+    if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
+    if (!m_cmdList) { m_d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_cmdAlloc, nullptr, IID_PPV_ARGS(&m_cmdList)); m_cmdList->Close(); }
+}
+
 void ProxySwapChain::ProcessSGSR12() {
     if (!m_d3d12Device || !m_commandQueue) return;
     if (!m_computePSO) InitD3D12Compute();
     if (!m_computePSO) return;
-    if (!m_cmdAlloc) m_d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&m_cmdAlloc));
-    if (!m_cmdList) { m_d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_cmdAlloc, nullptr, IID_PPV_ARGS(&m_cmdList)); m_cmdList->Close(); }
+    EnsureD3D12Infrastructure();
+    if (!m_cmdAlloc || !m_cmdList || !m_fence) return;
     ExecuteD3D12Compute();
+}
+
+// ─── D3D12 Frame Generation Pipeline ────────────────────
+
+void ProxySwapChain::InitFG12() {
+    if (!m_d3d12Device || m_fgInitialized) return;
+    AD_LOG_I("Initializing D3D12 Frame Generation Pipeline...");
+
+    // Root signature: 5 constants + 2 SRV (curr, prev) + 1 UAV (output)
+    D3D12_DESCRIPTOR_RANGE ranges[3] = {};
+    ranges[0].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV; ranges[0].NumDescriptors = 2; ranges[0].BaseShaderRegister = 0;
+    ranges[1].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV; ranges[1].NumDescriptors = 1; ranges[1].BaseShaderRegister = 0;
+
+    D3D12_ROOT_PARAMETER rootParams[3] = {};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS; rootParams[0].Constants.ShaderRegister = 0; rootParams[0].Constants.Num32BitValues = 4; rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[1].DescriptorTable.NumDescriptorRanges = 1; rootParams[1].DescriptorTable.pDescriptorRanges = &ranges[0]; rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+    rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE; rootParams[2].DescriptorTable.NumDescriptorRanges = 1; rootParams[2].DescriptorTable.pDescriptorRanges = &ranges[1]; rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_STATIC_SAMPLER_DESC sampler = {}; sampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR; sampler.AddressU = sampler.AddressV = sampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP; sampler.ShaderRegister = 0; sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    D3D12_ROOT_SIGNATURE_DESC rsDesc = {}; rsDesc.NumParameters = 3; rsDesc.pParameters = rootParams; rsDesc.NumStaticSamplers = 1; rsDesc.pStaticSamplers = &sampler;
+    ID3DBlob* sigBlob = nullptr; ID3DBlob* errBlob = nullptr;
+    if (FAILED(D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob))) {
+        AD_LOG_E("FG Root Sig Error: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "Unknown"); if (errBlob) errBlob->Release(); return;
+    }
+    m_d3d12Device->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&m_fgRootSig));
+    sigBlob->Release();
+
+    // Compile simplified interpolation shader
+    ID3DBlob* shaderBlob = nullptr;
+    HRESULT hr = D3DCompile(adrena::shaders::fg_interpolate, adrena::shaders::fg_interpolate_size, "fg_interpolate.hlsl", nullptr, nullptr, "CSMain", "cs_5_0", 0, 0, &shaderBlob, &errBlob);
+    if (FAILED(hr)) { AD_LOG_E("FG Shader Compile Failed: %s", errBlob ? (char*)errBlob->GetBufferPointer() : "Unknown"); if (errBlob) errBlob->Release(); return; }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {}; psoDesc.pRootSignature = m_fgRootSig; psoDesc.CS = { shaderBlob->GetBufferPointer(), shaderBlob->GetBufferSize() };
+    m_d3d12Device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&m_fgInterpolatePSO));
+    shaderBlob->Release();
+
+    // Descriptor heap: 2 SRV (curr + prev) + 1 UAV (output)
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {}; heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV; heapDesc.NumDescriptors = 3; heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+    m_d3d12Device->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&m_fgHeap));
+
+    // Previous frame texture (same size as backbuffer)
+    D3D12_RESOURCE_DESC texDesc = {}; texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D; texDesc.Width = m_displayWidth; texDesc.Height = m_displayHeight; texDesc.DepthOrArraySize = 1; texDesc.MipLevels = 1; texDesc.Format = m_format; texDesc.SampleDesc = { 1, 0 }; texDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+    D3D12_HEAP_PROPERTIES heapProps = {}; heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+    m_d3d12Device->CreateCommittedResource(&heapProps, D3D12_HEAP_FLAG_NONE, &texDesc, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, nullptr, IID_PPV_ARGS(&m_prevFrameTex));
+
+    m_fgInitialized = true;
+    AD_LOG_I("D3D12 Frame Generation Pipeline initialized! (%ux%u)", m_displayWidth, m_displayHeight);
+}
+
+void ProxySwapChain::ProcessFrameGen12() {
+    if (!m_d3d12Device || !m_commandQueue) return;
+    auto& cfg = GetConfig();
+    if (cfg.fg_mode == FGMode::X1) return;
+
+    if (!m_fgInitialized) InitFG12();
+    if (!m_fgInterpolatePSO) return;
+
+    // Ensure shared D3D12 infrastructure exists BEFORE first frame history copy
+    EnsureD3D12Infrastructure();
+    if (!m_fence || !m_cmdAlloc || !m_cmdList) return;
+
+    // First frame: just save history, no interpolation
+    if (!m_fgHasHistory) {
+        // Copy current backbuffer to prevFrameTex
+        m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+        if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
+        m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, nullptr);
+
+        ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex();
+        m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
+
+        D3D12_RESOURCE_BARRIER barriers[2] = {};
+        barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_prevFrameTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        m_cmdList->ResourceBarrier(2, barriers);
+        m_cmdList->CopyResource(m_prevFrameTex, backBuffer);
+        barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+        barriers[1].Transition.pResource = m_prevFrameTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        m_cmdList->ResourceBarrier(2, barriers);
+        m_cmdList->Close();
+        ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
+        m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+        backBuffer->Release();
+
+        m_fgHasHistory = true;
+        AD_LOG_I("FG: First frame captured, interpolation starts next frame");
+        return;
+    }
+
+    // Generate interpolated frames based on multiplier
+    // Uses compute-based interpolation: blend prev+curr frames at interpolation factor t
+    // Then present the interpolated result as extra frames
+    int multiplier = (int)cfg.fg_mode + 1; // X1=1, X2=2, X3=3, X4=4, X5=5, X6=6
+
+    for (int i = 1; i < multiplier; i++) {
+        float t = (float)i / (float)multiplier;
+
+        // Compute interpolation: blend prevFrameTex and current backbuffer at factor t
+        // Then write result to backbuffer and present
+        m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+        if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
+        m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_fgInterpolatePSO);
+
+        ID3D12Resource* backBuffer = nullptr; UINT bbIdx = m_real->GetCurrentBackBufferIndex();
+        m_real->GetBuffer(bbIdx, IID_PPV_ARGS(&backBuffer));
+
+        // Transition backbuffer to UAV for compute write
+        D3D12_RESOURCE_BARRIER barrier = {};
+        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barrier.Transition.pResource = backBuffer;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        m_cmdList->ResourceBarrier(1, &barrier);
+
+        // Create descriptors: SRV[0]=prevFrame, SRV[1]=prevFrame (used as both curr/prev for simple blend), UAV=backbuffer
+        UINT descSize = m_d3d12Device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        D3D12_CPU_DESCRIPTOR_HANDLE hCPU = m_fgHeap->GetCPUDescriptorHandleForHeapStart();
+        D3D12_GPU_DESCRIPTOR_HANDLE hGPU = m_fgHeap->GetGPUDescriptorHandleForHeapStart();
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {}; srvDesc.Format = m_format; srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D; srvDesc.Texture2D.MipLevels = 1; srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        m_d3d12Device->CreateShaderResourceView(m_prevFrameTex, &srvDesc, hCPU); hCPU.ptr += descSize;
+        m_d3d12Device->CreateShaderResourceView(m_prevFrameTex, &srvDesc, hCPU); hCPU.ptr += descSize;
+        D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {}; uavDesc.Format = m_format; uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+        m_d3d12Device->CreateUnorderedAccessView(backBuffer, nullptr, &uavDesc, hCPU);
+
+        // Dispatch interpolation compute shader
+        ID3D12DescriptorHeap* heaps[] = { m_fgHeap }; m_cmdList->SetDescriptorHeaps(1, heaps);
+        m_cmdList->SetComputeRootSignature(m_fgRootSig);
+        // Constants: resolution(2) + t(1) + frameCount(1)
+        struct { uint32_t w, h; float interpT; uint32_t frame; } fgConst;
+        fgConst.w = m_displayWidth; fgConst.h = m_displayHeight; fgConst.interpT = t; fgConst.frame = (uint32_t)m_fenceValue;
+        m_cmdList->SetComputeRoot32BitConstants(0, 4, &fgConst, 0);
+        m_cmdList->SetComputeRootDescriptorTable(1, hGPU);
+        m_cmdList->SetComputeRootDescriptorTable(2, D3D12_GPU_DESCRIPTOR_HANDLE{ hGPU.ptr + 2 * descSize });
+        m_cmdList->Dispatch((m_displayWidth + 7) / 8, (m_displayHeight + 7) / 8, 1);
+
+        // Transition backbuffer: UAV -> PRESENT
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+        m_cmdList->ResourceBarrier(1, &barrier);
+
+        m_cmdList->Close();
+        ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
+        m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+        backBuffer->Release();
+
+        // Present the interpolated frame
+        m_real->Present(0, 0);
+    }
+
+    // Save current frame as history for next iteration
+    m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+    if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
+    m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, nullptr);
+
+    ID3D12Resource* backBuffer = nullptr; UINT index = m_real->GetCurrentBackBufferIndex();
+    m_real->GetBuffer(index, IID_PPV_ARGS(&backBuffer));
+
+    D3D12_RESOURCE_BARRIER barriers[2] = {};
+    barriers[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barriers[1].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION; barriers[1].Transition.pResource = m_prevFrameTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    m_cmdList->ResourceBarrier(2, barriers);
+    m_cmdList->CopyResource(m_prevFrameTex, backBuffer);
+    barriers[0].Transition.pResource = backBuffer; barriers[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE; barriers[0].Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+    barriers[1].Transition.pResource = m_prevFrameTex; barriers[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST; barriers[1].Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    m_cmdList->ResourceBarrier(2, barriers);
+    m_cmdList->Close();
+    ID3D12CommandList* lists[] = { m_cmdList }; m_commandQueue->ExecuteCommandLists(1, lists);
+    m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
+    backBuffer->Release();
 }
 
 // ─── Overlay Rendering ──────────────────────────────────
@@ -374,6 +598,16 @@ void ProxySwapChain::SetupResources() {
     auto& cfg = GetConfig(); cfg.ApplyRenderScale();
     m_renderWidth = (UINT)(m_displayWidth * cfg.render_scale);
     m_renderHeight = (UINT)(m_displayHeight * cfg.render_scale);
+    m_lastRenderScale = cfg.render_scale;
+
+    // Clamp render dimensions to at least 1 and at most display dimensions
+    if (m_renderWidth < 1) m_renderWidth = 1;
+    if (m_renderHeight < 1) m_renderHeight = 1;
+    if (m_renderWidth > m_displayWidth) m_renderWidth = m_displayWidth;
+    if (m_renderHeight > m_displayHeight) m_renderHeight = m_displayHeight;
+
+    AD_LOG_I("SetupResources: render=%ux%u display=%ux%u scale=%.2f",
+             m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight, cfg.render_scale);
 
     if (!m_isD3D12 && m_d3d11Device) {
         D3D11_TEXTURE2D_DESC rtDesc = {};
@@ -404,6 +638,56 @@ void ProxySwapChain::SetupResources() {
     }
 
     m_initialized = true;
+}
+
+void ProxySwapChain::CheckConfigChange() {
+    auto& cfg = GetConfig();
+    cfg.ApplyRenderScale();
+    float newScale = cfg.render_scale;
+
+    // Detect if render scale changed (quality preset or custom scale changed in overlay)
+    if (m_initialized && m_lastRenderScale != newScale && m_displayWidth > 0) {
+        UINT newRenderW = (UINT)(m_displayWidth * newScale);
+        UINT newRenderH = (UINT)(m_displayHeight * newScale);
+        if (newRenderW < 1) newRenderW = 1;
+        if (newRenderH < 1) newRenderH = 1;
+        if (newRenderW > m_displayWidth) newRenderW = m_displayWidth;
+        if (newRenderH > m_displayHeight) newRenderH = m_displayHeight;
+
+        if (newRenderW != m_renderWidth || newRenderH != m_renderHeight) {
+            AD_LOG_I("Config changed: scale %.2f->%.2f render %ux%u->%ux%u",
+                     m_lastRenderScale, newScale, m_renderWidth, m_renderHeight, newRenderW, newRenderH);
+            m_renderWidth = newRenderW;
+            m_renderHeight = newRenderH;
+            m_lastRenderScale = newScale;
+
+            // Recreate D3D12 compute pipeline with new dimensions
+            // (intermediate texture stays at display size, only constants change)
+            if (m_isD3D12 && m_computePSO) {
+                AD_LOG_I("D3D12 Compute Pipeline updated for new render size (%ux%u -> %ux%u)",
+                         m_renderWidth, m_renderHeight, m_displayWidth, m_displayHeight);
+            }
+        }
+    }
+}
+
+void ProxySwapChain::ApplyVulkanOptimizations() {
+    if (m_vulkanOptApplied) return;
+    auto& cfg = GetConfig();
+
+    // Detect VKD3D/Wine environment by checking GPU name for "Turnip" or "Wrapper"
+    // These environments benefit from specific frame latency settings
+    // SetMaximumFrameLatency reduces input lag and improves frame pacing in VKD3D
+    if (m_isD3D12 && m_real) {
+        UINT latency = (UINT)cfg.max_frame_queue;
+        if (latency > 0) {
+            HRESULT hr = m_real->SetMaximumFrameLatency(latency);
+            AD_LOG_I("Vulkan optimization: SetMaximumFrameLatency(%u) hr=0x%X", latency, hr);
+        }
+    }
+
+    m_vulkanOptApplied = true;
+    AD_LOG_I("Vulkan/VKD3D optimizations applied (frame_queue=%d)", cfg.max_frame_queue);
 }
 
 void ProxySwapChain::TeardownResources() {

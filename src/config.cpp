@@ -42,6 +42,8 @@ static FGMode ParseFGMode(const std::string& s) {
     if (s == "x2") return FGMode::X2;
     if (s == "x3") return FGMode::X3;
     if (s == "x4") return FGMode::X4;
+    if (s == "x5") return FGMode::X5;
+    if (s == "x6") return FGMode::X6;
     return FGMode::X1;
 }
 static MotionQuality ParseMotionQuality(const std::string& s) {
