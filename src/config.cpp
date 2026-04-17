@@ -134,10 +134,14 @@ void Config::Save(const std::string& path)
          << (motion_quality==MotionQuality::High?"high":motion_quality==MotionQuality::Medium?"medium":"low")
          << "\nfps_threshold=" << fps_threshold << "\n\n";
     file << "[Overlay]\nenabled=" << (overlay_enabled?1:0)
+         << "\ntoggle_key=HOME"
          << "\nfps_display=" << (fps_display?1:0)
          << "\nopacity=" << overlay_opacity << "\n\n";
     file << "[Advanced]\nforce_d3d11=" << (force_d3d11?1:0)
-         << "\nvsync=" << vsync << "\n";
+         << "\nrt_format=" << rt_format
+         << "\nmax_frame_queue=" << max_frame_queue
+         << "\nvsync=" << vsync
+         << "\nauto_detect_gpu=" << (auto_detect_gpu?1:0) << "\n";
 }
 
 Config& GetConfig() {

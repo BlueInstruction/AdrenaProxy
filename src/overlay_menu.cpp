@@ -35,6 +35,7 @@ void OverlayMenu::Init(HWND hwnd) {
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle(); style.WindowRounding = 6.0f; style.FrameRounding = 4.0f; style.Alpha = GetConfig().overlay_opacity;
     ImGui_ImplWin32_Init(hwnd);
+    m_initialized = true;
     AD_LOG_I("Overlay Win32 initialized");
 #endif
 }

@@ -7,7 +7,9 @@
 
 namespace adrena {
 
-struct SGSRConstants { uint32_t renderSize[2]; uint32_t displaySize[2]; float sharpness; uint32_t frameCount; };
+// D3D11 requires constant buffer ByteWidth to be a multiple of 16
+// SGSRConstants is 24 bytes, padded to 32 with _pad
+struct SGSRConstants { uint32_t renderSize[2]; uint32_t displaySize[2]; float sharpness; uint32_t frameCount; uint32_t _pad[2]; };
 
 SGSR1Pass::SGSR1Pass() {}
 SGSR1Pass::~SGSR1Pass() {

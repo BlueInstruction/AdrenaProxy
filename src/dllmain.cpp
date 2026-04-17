@@ -136,10 +136,10 @@ extern "C" BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVO
         if (sl) strcpy(sl + 1, "adrena_proxy.ini");
         else strcpy(iniPath, "adrena_proxy.ini");
 
+        adrena::Logger::Init(adrena::LogLevel::Info);
+
         auto& cfg = adrena::GetConfig();
         cfg.Load(iniPath);
-
-        adrena::Logger::Init(adrena::LogLevel::Info);
         AD_LOG_I("=== AdrenaProxy v" ADRENA_PROXY_VERSION " Attached ===");
         AD_LOG_I("DLL Path: %s", g_dllPath);
 
