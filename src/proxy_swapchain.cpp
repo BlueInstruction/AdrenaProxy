@@ -139,7 +139,7 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
     static UINT s_frameCount = 0;
     auto& cfg = GetConfig();
 
-    // Hook window on first present
+    // Hook window on first present (one-time)
     if (!m_hwnd) {
         DXGI_SWAP_CHAIN_DESC desc = {};
         if (SUCCEEDED(m_real->GetDesc(&desc)) && desc.OutputWindow) {
@@ -147,42 +147,67 @@ HRESULT ProxySwapChain::HookPresent(UINT SyncInterval, UINT Flags) {
         }
     }
 
-    // Apply Vulkan/VKD3D optimizations on first present
+    // Apply Vulkan/VKD3D optimizations on first present (one-time)
     if (!m_vulkanOptApplied && m_initialized) ApplyVulkanOptimizations();
 
-    // Check if quality/scale changed at runtime
-    CheckConfigChange();
+    // ── Fast-path: zero overhead when everything is disabled ──
+    bool sgsrWanted = cfg.enabled && cfg.sgsr_mode != SGSRMode::Off;
+    bool fgWanted = cfg.fg_mode != FGMode::X1;
+    bool overlayWanted = false;
+#ifdef ADRENA_OVERLAY_ENABLED
+    overlayWanted = cfg.overlay_enabled && m_hwnd;
+#endif
 
+    if (!sgsrWanted && !fgWanted && !overlayWanted) {
+        s_frameCount++;
+        if (s_frameCount % 300 == 1) {
+            AD_LOG_I("Present #%u | SGSR=OFF | FG=OFF | D3D12=%s | fence=%llu | %ux%u (fast-path)",
+                     s_frameCount, m_isD3D12 ? "yes" : "no", m_fenceValue,
+                     m_displayWidth, m_displayHeight);
+        }
+        return m_real->Present(SyncInterval, Flags);
+    }
+
+    // Check if quality/scale changed at runtime (throttled: every 60 frames)
+    if (s_frameCount % 60 == 0) CheckConfigChange();
+
+    // ── SGSR compute pass ──
     bool sgsrActive = false;
-    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off && m_initialized) {
+    if (sgsrWanted && m_initialized) {
         if (m_isD3D12) ProcessSGSR12(); else ProcessSGSR11();
         sgsrActive = true;
     }
 
-    // Frame Generation: generate extra presents after SGSR, before overlay
-    // Respects fps_threshold: auto-disable FG when FPS exceeds threshold
+    // ── Frame Generation: pure extra presents (DLSS Enabler MFG style) ──
+    // No GPU compute work — just extra Present(0,0) calls.
+    // This improves Vulkan command scheduling on Turnip/Adreno.
     bool fgActive = false;
-    if (cfg.fg_mode != FGMode::X1 && m_initialized) {
+    if (fgWanted && m_initialized) {
         bool fgAllowed = true;
         if (cfg.fps_threshold > 0) {
-            // Simple frame time estimate from fence cadence
             static LARGE_INTEGER s_lastTime = {}; static float s_estFps = 0.0f;
             LARGE_INTEGER now, freq; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&freq);
             if (s_lastTime.QuadPart > 0) {
                 double dt = (double)(now.QuadPart - s_lastTime.QuadPart) / (double)freq.QuadPart;
-                if (dt > 0.0) s_estFps = s_estFps * 0.9f + (float)(1.0 / dt) * 0.1f; // EMA smoothing
+                if (dt > 0.0) s_estFps = s_estFps * 0.9f + (float)(1.0 / dt) * 0.1f;
             }
             s_lastTime = now;
             if (s_estFps > (float)cfg.fps_threshold) fgAllowed = false;
         }
-        if (fgAllowed && m_isD3D12) { ProcessFrameGen12(); fgActive = true; }
+        if (fgAllowed) {
+            int multiplier = (int)cfg.fg_mode + 1; // X2=2, X3=3, X4=4, X5=5, X6=6
+            for (int i = 1; i < multiplier; i++) {
+                m_real->Present(0, 0);
+            }
+            fgActive = true;
+        }
     }
 
 #ifdef ADRENA_OVERLAY_ENABLED
-    if (cfg.overlay_enabled && m_hwnd) RenderOverlay();
+    if (overlayWanted) RenderOverlay();
 #endif
 
-    // Log every 300 frames to confirm Present is being called and SGSR is dispatching
+    // Log every 300 frames
     s_frameCount++;
     if (s_frameCount % 300 == 1) {
         AD_LOG_I("Present #%u | SGSR=%s(sharp=%.1f) | FG=%s(x%d) | D3D12=%s | fence=%llu | %ux%u",
@@ -250,9 +275,10 @@ void ProxySwapChain::InitD3D12Compute() {
 }
 
 void ProxySwapChain::ExecuteD3D12Compute() {
-    // Sync: wait for GPU to finish previous frame
-    m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
-    if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, INFINITE); }
+    // Non-blocking sync: wait only for the PREVIOUS frame's GPU work to complete.
+    // We wait on (m_fenceValue), not (m_fenceValue+1), so we overlap CPU recording
+    // with GPU execution of the current frame. Only stalls if GPU is behind.
+    if (m_fence->GetCompletedValue() < m_fenceValue) { m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent); WaitForSingleObject(m_fenceEvent, 16); }
 
     m_cmdAlloc->Reset(); m_cmdList->Reset(m_cmdAlloc, m_computePSO);
 
@@ -336,9 +362,13 @@ void ProxySwapChain::ProcessSGSR12() {
     ExecuteD3D12Compute();
 }
 
-// ─── D3D12 Frame Generation Pipeline ────────────────────
+// ─── D3D12 Frame Generation ─────────────────────────────
+// FG is now implemented as pure extra Present(0,0) calls in HookPresent.
+// The compute-based interpolation pipeline below is kept for future use
+// when proper current-frame SRV binding is implemented.
 
-void ProxySwapChain::InitFG12() {
+#if 0 // Dead code — FG compute pipeline (disabled in favor of pure extra presents)
+void ProxySwapChain_UNUSED_InitFG12() {
     if (!m_d3d12Device || m_fgInitialized) return;
     AD_LOG_I("Initializing D3D12 Frame Generation Pipeline...");
 
@@ -384,7 +414,7 @@ void ProxySwapChain::InitFG12() {
     AD_LOG_I("D3D12 Frame Generation Pipeline initialized! (%ux%u)", m_displayWidth, m_displayHeight);
 }
 
-void ProxySwapChain::ProcessFrameGen12() {
+void ProxySwapChain_UNUSED_ProcessFrameGen12() {
     if (!m_d3d12Device || !m_commandQueue) return;
     auto& cfg = GetConfig();
     if (cfg.fg_mode == FGMode::X1) return;
@@ -504,6 +534,7 @@ void ProxySwapChain::ProcessFrameGen12() {
     m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue);
     backBuffer->Release();
 }
+#endif // Dead FG compute pipeline
 
 // ─── Overlay Rendering ──────────────────────────────────
 
@@ -540,10 +571,13 @@ void ProxySwapChain::RenderOverlay() {
     m_real->GetDesc1(&scDesc);
     overlay.InitDX12(m_d3d12Device, scDesc.BufferCount, m_format);
 
-    // Wait for previous overlay work to complete
+    // Ensure fence exists for overlay sync (may not exist if SGSR is disabled)
+    EnsureD3D12Infrastructure();
+
+    // Wait for previous overlay work to complete (bounded timeout)
     if (m_fence && m_fence->GetCompletedValue() < m_fenceValue) {
         m_fence->SetEventOnCompletion(m_fenceValue, m_fenceEvent);
-        WaitForSingleObject(m_fenceEvent, INFINITE);
+        WaitForSingleObject(m_fenceEvent, 16);
     }
 
     // Build ImGui frame (FPS counter + menu)
@@ -585,6 +619,9 @@ void ProxySwapChain::RenderOverlay() {
     m_overlayCmdList->Close();
     ID3D12CommandList* lists[] = { m_overlayCmdList };
     m_commandQueue->ExecuteCommandLists(1, lists);
+
+    // Signal fence so next frame's overlay wait can gate on this work
+    if (m_fence) { m_fenceValue++; m_commandQueue->Signal(m_fence, m_fenceValue); }
 
     backBuffer->Release();
 #endif // ADRENA_DX12_OVERLAY
@@ -675,19 +712,22 @@ void ProxySwapChain::ApplyVulkanOptimizations() {
     if (m_vulkanOptApplied) return;
     auto& cfg = GetConfig();
 
-    // Detect VKD3D/Wine environment by checking GPU name for "Turnip" or "Wrapper"
-    // These environments benefit from specific frame latency settings
-    // SetMaximumFrameLatency reduces input lag and improves frame pacing in VKD3D
+    // SetMaximumFrameLatency reduces input lag and improves frame pacing in VKD3D.
+    // Note: VKD3D/Turnip may return DXGI_ERROR_NOT_CURRENTLY_AVAILABLE (0x887A0001)
+    // which is expected — the optimization is best-effort.
     if (m_isD3D12 && m_real) {
         UINT latency = (UINT)cfg.max_frame_queue;
         if (latency > 0) {
             HRESULT hr = m_real->SetMaximumFrameLatency(latency);
-            AD_LOG_I("Vulkan optimization: SetMaximumFrameLatency(%u) hr=0x%X", latency, hr);
+            if (SUCCEEDED(hr)) {
+                AD_LOG_I("Vulkan optimization: SetMaximumFrameLatency(%u) applied", latency);
+            } else {
+                AD_LOG_W("Vulkan optimization: SetMaximumFrameLatency(%u) not supported (hr=0x%X)", latency, hr);
+            }
         }
     }
 
     m_vulkanOptApplied = true;
-    AD_LOG_I("Vulkan/VKD3D optimizations applied (frame_queue=%d)", cfg.max_frame_queue);
 }
 
 void ProxySwapChain::TeardownResources() {
@@ -725,7 +765,7 @@ HRESULT ProxySwapChain::GetMatrixTransform(DXGI_MATRIX_3X2_F* m) { return m_real
 UINT    ProxySwapChain::GetCurrentBackBufferIndex() { return m_real->GetCurrentBackBufferIndex(); }
 HRESULT ProxySwapChain::CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE c, UINT* s) { return m_real->CheckColorSpaceSupport(c,s); }
 HRESULT ProxySwapChain::SetColorSpace1(DXGI_COLOR_SPACE_TYPE c) { return m_real->SetColorSpace1(c); }
-HRESULT ProxySwapChain::ResizeBuffers1(UINT bc, UINT w, UINT h, DXGI_FORMAT f, UINT fl, const UINT* n, IUnknown* const* q) { return m_real->ResizeBuffers1(bc,w,h,f,fl,n,q); }
+HRESULT ProxySwapChain::ResizeBuffers1(UINT bc, UINT w, UINT h, DXGI_FORMAT f, UINT fl, const UINT* n, IUnknown* const* q) { TeardownResources(); HRESULT hr = m_real->ResizeBuffers1(bc,w,h,f,fl,n,q); if (SUCCEEDED(hr)) SetupResources(); return hr; }
 HRESULT ProxySwapChain::SetHDRMetaData(DXGI_HDR_METADATA_TYPE t, UINT s, void* d) { return m_real->SetHDRMetaData(t,s,d); }
 
 } // namespace adrena

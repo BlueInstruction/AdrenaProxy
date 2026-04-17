@@ -93,6 +93,7 @@ void Config::Load(const std::string& path)
         std::string k = Trim(line.substr(0, eq));
         std::string v = Trim(line.substr(eq + 1));
 
+        try {
         if (section == "SGSR") {
             if (k == "enabled")       enabled = (std::stoi(v) != 0);
             else if (k == "mode")     sgsr_mode = ParseSGSRMode(v);
@@ -115,6 +116,9 @@ void Config::Load(const std::string& path)
             else if (k == "vsync")     vsync = std::stoi(v);
             else if (k == "auto_detect_gpu") auto_detect_gpu = (std::stoi(v) != 0);
         }
+        } catch (const std::exception&) {
+            AD_LOG_W("Config: malformed value for [%s] %s=%s — skipped", section.c_str(), k.c_str(), v.c_str());
+        }
     }
     ApplyRenderScale();
     AD_LOG_I("Config loaded: SGSR=%d Quality=%d Scale=%.2f FG=%d",
@@ -135,8 +139,24 @@ void Config::Save(const std::string& path)
     file << "[FrameGeneration]\nmode=x" << (int)fg_mode+1 << "\nmotion_quality="
          << (motion_quality==MotionQuality::High?"high":motion_quality==MotionQuality::Medium?"medium":"low")
          << "\nfps_threshold=" << fps_threshold << "\n\n";
+    // Serialize toggle_key back to its name
+    const char* keyName = "HOME";
+    if (toggle_key == VK_INSERT)    keyName = "INSERT";
+    else if (toggle_key == VK_DELETE) keyName = "DELETE";
+    else if (toggle_key == VK_END)    keyName = "END";
+    else if (toggle_key == VK_PRIOR)  keyName = "PAGE_UP";
+    else if (toggle_key == VK_NEXT)   keyName = "PAGE_DOWN";
+    else {
+        for (int i = 1; i <= 12; i++) {
+            if (toggle_key == VK_F1 + (i - 1)) {
+                static char fkeyBuf[8]; sprintf(fkeyBuf, "F%d", i);
+                keyName = fkeyBuf;
+                break;
+            }
+        }
+    }
     file << "[Overlay]\nenabled=" << (overlay_enabled?1:0)
-         << "\ntoggle_key=HOME"
+         << "\ntoggle_key=" << keyName
          << "\nfps_display=" << (fps_display?1:0)
          << "\nopacity=" << overlay_opacity << "\n\n";
     file << "[Advanced]\nforce_d3d11=" << (force_d3d11?1:0)

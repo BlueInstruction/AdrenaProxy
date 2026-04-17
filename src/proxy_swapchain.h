@@ -64,9 +64,6 @@ private:
     void TeardownResources();
     void ProcessSGSR11();
     void ProcessSGSR12();
-    void ProcessFrameGen12();
-    void InitFG12();
-    void ExecuteFGInterpolate(float t);
     void RenderOverlay();
     void InitD3D12Compute();
     void ExecuteD3D12Compute();
@@ -100,7 +97,8 @@ private:
     HANDLE              m_fenceEvent = nullptr;
     UINT64              m_fenceValue = 0;
 
-    // D3D12 Frame Generation Pipeline
+    // D3D12 Frame Generation — pure extra presents (no compute pipeline needed)
+    // FG compute interpolation resources kept for future use but not active
     ID3D12PipelineState* m_fgInterpolatePSO = nullptr;
     ID3D12RootSignature* m_fgRootSig = nullptr;
     ID3D12Resource*      m_prevFrameTex = nullptr;

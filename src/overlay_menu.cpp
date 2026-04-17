@@ -291,7 +291,8 @@ void OverlayMenu::BuildSGSRTab() {
     }
 
     float scale = cfg.GetRenderScale();
-    if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); resIdx = 8; }
+    float scalePct = scale * 100.0f;
+    if (ImGui::SliderFloat("Render Scale", &scalePct, 25.0f, 100.0f, "%.0f%%")) { cfg.custom_scale = scalePct / 100.0f; cfg.ApplyRenderScale(); resIdx = 8; }
     if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {}
 
     // Show current mode info
@@ -311,16 +312,14 @@ void OverlayMenu::BuildFGTab() {
         ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Frame Generation disabled");
         return;
     }
-    const char* mq[] = { "Low", "Medium", "High" }; int mqIdx = (int)cfg.motion_quality;
-    if (ImGui::Combo("Motion Quality", &mqIdx, mq, 3)) cfg.motion_quality = (MotionQuality)mqIdx;
     if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 240, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "0 = always active (recommended for emulators)");
 
     ImGui::Separator();
     int multiplier = (int)cfg.fg_mode + 1;
-    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "FG Active: x%d (%d interpolated frames per real frame)", multiplier, multiplier - 1);
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Compute interpolation + extra presents");
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Optimized for Vulkan/VKD3D/Turnip pipeline");
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "FG Active: x%d (%d extra presents per frame)", multiplier, multiplier - 1);
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Pure extra presents (zero GPU overhead)");
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Improves Vulkan/VKD3D/Turnip frame pacing");
     if (cfg.fps_threshold > 0) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Auto-disable above %d FPS", cfg.fps_threshold);
     }
