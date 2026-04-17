@@ -1,10 +1,9 @@
-# AdrenaProxy
+# AdrenaProxy v2.0
+**Qualcomm SGSR Upscaling & Frame Generation — DirectX 12**
 
-**Qualcomm SGSR Upscaling & Frame Generation — DirectX 11 / DirectX 12 / Vulkan**
+AdrenaProxy brings Qualcomm's Snapdragon Game Super Resolution (SGSR) upscaling and Frame Generation to any DLSS-compatible DirectX 12 game — including inside emulators like Winlator on Snapdragon/Adreno devices.
 
-AdrenaProxy is a `dxgi.dll` proxy mod that brings Qualcomm's Snapdragon Game Super Resolution (SGSR) upscaling and compute-based Frame Generation to **any** DirectX 11 or DirectX 12 game — including inside emulators like Winlator on Snapdragon/Adreno devices.
-
-Inspired by OptiScaler and DLSS Enabler MFG, but powered by SGSR for Qualcomm/Adreno GPUs.
+Inspired by OptiScaler and DLSS Enabler, powered by SGSR for Qualcomm GPUs.
 
 ---
 
@@ -12,47 +11,45 @@ Inspired by OptiScaler and DLSS Enabler MFG, but powered by SGSR for Qualcomm/Ad
 
 | Feature | Status | Details |
 |---|---|---|
-| **DirectX 11 Support** | ✅ Stable | Full swapchain hook with D3D11 compute |
-| **DirectX 12 Support** | ✅ Stable | Full swapchain + command queue hook |
-| **SGSR 1** — Spatial upscaling | ✅ Stable | 12-tap Lanczos + edge-adaptive sharpening |
-| **SGSR 2** — Temporal upscaling | ⚠️ Experimental | TAAU-based, requires depth buffer |
-| **Frame Generation x2/x3/x4** | ⚠️ Experimental | Compute-based interpolation |
-| **In-game Overlay Menu** | ✅ Stable | ImGui-based, like OptiScaler |
+| **SGSR 1 Upscaling** | ✅ Stable | Via fake NVNGX API (dlss.dll) |
+| **SGSR 1 Sharpening** | ✅ Stable | Fallback for non-DLSS games |
+| **Frame Generation x2/x3/x4** | ✅ Stable | Pure Extra Present (zero GPU overhead) |
+| **In-game Overlay** | ✅ Stable | ImGui-based, HOME key toggle |
 | **Auto GPU Detection** | ✅ Stable | Adreno 6xx/7xx/8xx auto-tuning |
+| **Multiple Entry Points** | ✅ Stable | dxgi.dll, version.dll |
 | **INI + Live Config** | ✅ Stable | Per-game settings + runtime changes |
 
 ---
 
 ## 🎮 How It Works
 
+### DLSS-Compatible Games (Path A)
+
 ```
-┌──────────────────────────────────────────────────┐
-│  Game (DX11 or DX12)                             │
-│  Renders to low-res backbuffer                   │
-└─────────────────────┬────────────────────────────┘
-                      ↓
-┌──────────────────────────────────────────────────┐
-│  AdrenaProxy dxgi.dll                            │
-│  ┌────────────────────────────────────────────┐  │
-│  │  GetBuffer → fake low-res render target    │  │
-│  │  Present  → SGSR upscale (EASU + RCAS)    │  │
-│  │          → Frame Gen interpolation         │  │
-│  │          → ImGui overlay rendering         │  │
-│  │          → Real Present                    │  │
-│  └────────────────────────────────────────────┘  │
-│  Supports: ID3D11Device + ID3D12Device           │
-│  Compute:  D3D11 CS or D3D12 CS                 │
-└─────────────────────┬────────────────────────────┘
-                      ↓
-┌──────────────────────────────────────────────────┐
-│  Real dxgi.dll (System / DXVK / Wine)            │
-│  → Vulkan / GPU                                  │
-└──────────────────────────────────────────────────┘
+Game (DLSS support)
+→ calls DLSS_GetOptimalSettings → we return lower resolution
+→ game renders at lower resolution (real GPU savings!)
+→ calls DLSS_Evaluate → we run SGSR to upscale to display resolution
+→ dxgi.dll adds Frame Generation (Pure Extra Present)
+→ dxgi.dll renders ImGui overlay
+→ Real Present
+```
+
+### Non-DLSS Games (Path B)
+
+```
+Game (no DLSS)
+→ renders normally at full resolution
+→ dxgi.dll applies SGSR sharpening (post-process)
+→ dxgi.dll adds Frame Generation (Pure Extra Present)
+→ dxgi.dll renders ImGui overlay
+→ Real Present
+→ Early exit if everything OFF (zero overhead)
 ```
 
 ---
 
-## 📐 Quality Presets
+## 📐 Quality Presets (DLSS Games)
 
 | Preset | Render Scale | Use Case |
 |---|---|---|
@@ -64,25 +61,54 @@ Inspired by OptiScaler and DLSS Enabler MFG, but powered by SGSR for Qualcomm/Ad
 
 ---
 
-## 🎬 Frame Generation Modes
+## 🎬 Frame Generation
 
-| Mode | Output Frames | Best For |
+| Mode | Output | How It Works |
 |---|---|---|
-| x1 (Off) | 1:1 | No interpolation |
-| x2 | 2× | Adreno 6xx/7xx |
-| x3 | 3× | Adreno 7xx/8xx |
-| x4 | 4× | Adreno 8xx only |
+| x1 (Off) | 1× | No interpolation |
+| x2 | 2× | 1 extra Present(0,0) per frame |
+| x3 | 3× | 2 extra Presents |
+| x4 | 4× | 3 extra Presents |
 
-> ⚠️ Frame Generation is compute-based approximation. Quality is below DLSS 3 / FSR 3 FG.
+Pure Extra Present stimulates the Vulkan queue on Turnip/Adreno without
+GPU compute overhead. It does **not** change the backbuffer index, which
+permanently fixes the ImGui flickering issue.
 
 ---
 
 ## 🛠️ Installation
 
+### Windows / Winlator
+
 1. Download latest release from [Releases](../../releases)
-2. Copy `dxgi.dll` + `adrena_proxy.ini` to game directory (next to `.exe`)
-3. Edit `adrena_proxy.ini` or use in-game overlay
-4. Press **Home** key to open overlay menu
+2. Extract all files to game directory (next to `.exe`)
+3. Run `AdrenaProxy Setup.bat`
+4. Press **HOME** key in-game to open overlay
+
+### Linux / Wine / Proton
+
+```bash
+chmod +x "AdrenaProxy Setup.sh"
+./AdrenaProxy\ Setup.sh /path/to/game/directory
+```
+
+### Manual Installation
+
+Copy files manually:
+
+```
+adrenaproxy_sgsr.dll  → dlss.dll
+adrenaproxy_dxgi.dll  → dxgi.dll
+adrena_proxy.ini      → same directory
+```
+
+### If dxgi.dll is already used by another mod
+
+Use the `version.dll` entry point instead:
+
+```
+adrenaproxy_version.dll → version.dll
+```
 
 ---
 
@@ -90,20 +116,10 @@ Inspired by OptiScaler and DLSS Enabler MFG, but powered by SGSR for Qualcomm/Ad
 
 ### Prerequisites
 - CMake 3.20+
-- MinGW-w64 (x86_64-w64-mingw32) or MSVC 2022
+- MSVC 2022 (recommended) or MinGW-w64
 
-### MinGW (Linux Cross-Compile)
-```bash
-git clone https://github.com/BlueInstruction/AdrenaProxy.git
-cd AdrenaProxy && mkdir build && cd build
-cmake .. -G Ninja \
-  -DCMAKE_SYSTEM_NAME=Windows \
-  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
-  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
-make -j$(nproc)
-```
+### MSVC (Windows — recommended)
 
-### MSVC (Windows)
 ```bash
 git clone https://github.com/BlueInstruction/AdrenaProxy.git
 cd AdrenaProxy && mkdir build && cd build
@@ -111,40 +127,47 @@ cmake .. -G "Visual Studio 17 2022" -A x64
 cmake --build . --config Release
 ```
 
----
+### MinGW (Linux Cross-Compile — compile check only)
 
-## ⚙️ Configuration
-
-See `adrena_proxy.ini` for all options. Key settings:
-
-```ini
-[SGSR]
-enabled=1
-mode=sgsr1           ; off / sgsr1 / sgsr2
-quality=quality      ; ultra_quality / quality / balanced / performance / ultra_performance
-sharpness=0.80
-
-[FrameGeneration]
-mode=x1              ; x1 / x2 / x3 / x4
-motion_quality=medium; low / medium / high
-
-[Overlay]
-enabled=1
-toggle_key=HOME
+```bash
+git clone https://github.com/BlueInstruction/AdrenaProxy.git
+cd AdrenaProxy && mkdir build && cd build
+cmake .. -G Ninja \
+  -DCMAKE_SYSTEM_NAME=Windows \
+  -DCMAKE_C_COMPILER=x86_64-w64-mingw32-gcc \
+  -DCMAKE_CXX_COMPILER=x86_64-w64-mingw32-g++
+cmake --build . --config Release
 ```
 
 ---
 
-## 🖥️ Overlay Menu
+## ⚙️ Configuration
 
-Press **Home** (configurable) to toggle the in-game overlay:
+See `adrena_proxy.ini` for all options. Most settings can be changed
+at runtime via the in-game overlay (HOME key).
 
-- **SGSR Tab**: Enable/disable, mode, quality, sharpness
-- **Frame Gen Tab**: x1/x2/x3/x4, motion quality
-- **Display Tab**: FPS counter, overlay opacity
-- **Advanced Tab**: GPU info, log level, vsync
+---
 
-All changes apply instantly — no game restart needed.
+## 🖥️ Overlay
+
+Press **HOME** to toggle:
+
+- **SGSR Tab**: Enable/disable, quality, sharpness
+- **Frame Gen Tab**: x1/x2/x3/x4, FPS threshold
+- **Display Tab**: FPS counter, opacity
+
+---
+
+## 📁 File Reference
+
+| Distribution File | Installed As | Purpose |
+|---|---|---|
+| `adrenaproxy_sgsr.dll` | `dlss.dll` | SGSR upscaler via NVNGX API |
+| `adrenaproxy_dxgi.dll` | `dxgi.dll` | SwapChain proxy + FG + overlay |
+| `adrenaproxy_version.dll` | `version.dll` | Alternative entry point |
+| `adrena_proxy.ini` | (same) | Configuration |
+| `AdrenaProxy Setup.bat` | — | Windows installer |
+| `AdrenaProxy Setup.sh` | — | Linux installer |
 
 ---
 
@@ -152,9 +175,9 @@ All changes apply instantly — no game restart needed.
 
 | Environment | Status |
 |---|---|
-| Windows on Snapdragon (native DX12) | ✅ Primary target |
-| Winlator (DXVK + VKD3D + Adreno) | ✅ Supported |
+| Winlator (VKD3D + Turnip Adreno) | ✅ Primary target |
 | Wine + DXVK (Linux) | ✅ Supported |
+| Windows on Snapdragon (native DX12) | ✅ Supported |
 | Windows + NVIDIA/AMD/Intel | ✅ SGSR works universally |
 
 ---
@@ -164,7 +187,7 @@ All changes apply instantly — no game restart needed.
 - **Qualcomm SGSR** — BSD-3-Clause License
 - **ImGui** — MIT License
 - **OptiScaler** — Architecture inspiration
-- **DXVK** — Interop interfaces
+- **DLSS Enabler** — Pure Extra Present concept
 
 ## License
 
@@ -172,5 +195,6 @@ MIT License (AdrenaProxy code) / BSD-3-Clause (SGSR shaders)
 
 ## Disclaimer
 
-Not affiliated with Qualcomm Technologies, Inc.
-SGSR™ and Snapdragon™ are trademarks of Qualcomm Technologies, Inc.
+Not affiliated with Qualcomm Technologies, Inc.  
+SGSR™ and Snapdragon™ are trademarks of Qualcomm Technologies, Inc.  
+NVIDIA, DLSS, and NVNGX are trademarks of NVIDIA Corporation.
