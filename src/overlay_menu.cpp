@@ -84,37 +84,56 @@ void OverlayMenu::DrawHUD() {
     auto& cfg = GetConfig();
     if (!cfg.fps_display) return;
 
-    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(0.5f);
-    ImGui::Begin("##HUD", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing);
+    static GPUInfo gpuInfo = DetectGPU();
 
-    // FPS + Frame Time
+    // Draggable HUD — FirstUseEver so user can move it
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.5f);
+    ImGui::Begin("##HUD", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav);
+
+    // Double-click to toggle horizontal/vertical
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseDoubleClicked(0)) {
+        m_hudHorizontal = !m_hudHorizontal;
+    }
+
     ImVec4 fpsColor = (m_fps >= 55.0f) ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f) :
                       (m_fps >= 30.0f) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f) :
                                          ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-    ImGui::TextColored(fpsColor, "FPS: %.0f", m_fps);
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f ms)", m_frameTime);
 
-    // GPU info
-    static GPUInfo gpuInfo = DetectGPU();
-    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "GPU: %s", gpuInfo.name.c_str());
-    if (gpuInfo.vramMB > 0)
-        ImGui::Text("VRAM: %llu MB", gpuInfo.vramMB);
-
-    // RAM usage
-    MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
-    if (GlobalMemoryStatusEx(&memInfo)) {
-        DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
-        DWORDLONG totalMB = memInfo.ullTotalPhys / (1024 * 1024);
-        ImGui::Text("RAM: %llu / %llu MB", usedMB, totalMB);
-    }
-
-    // SGSR status
-    if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%% scale)", cfg.render_scale * 100.0f);
+    if (m_hudHorizontal) {
+        // ── Horizontal mode: single line ──
+        ImGui::TextColored(fpsColor, "%.0f FPS", m_fps);
+        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%.1fms", m_frameTime);
+        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "| %s", gpuInfo.name.c_str());
+        MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo)) {
+            DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
+            ImGui::SameLine(); ImGui::Text("| RAM:%lluMB", usedMB);
+        }
+        if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
+            ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR ON");
+        }
     } else {
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
+        // ── Vertical mode: multi-line ──
+        ImGui::TextColored(fpsColor, "FPS: %.0f", m_fps);
+        ImGui::SameLine(); ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(%.1f ms)", m_frameTime);
+
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "GPU: %s", gpuInfo.name.c_str());
+        if (gpuInfo.vramMB > 0)
+            ImGui::Text("VRAM: %llu MB", gpuInfo.vramMB);
+
+        MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo)) {
+            DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
+            DWORDLONG totalMB = memInfo.ullTotalPhys / (1024 * 1024);
+            ImGui::Text("RAM: %llu / %llu MB", usedMB, totalMB);
+        }
+
+        if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%%)", cfg.render_scale * 100.0f);
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
+        }
     }
 
     ImGui::End();
@@ -241,9 +260,31 @@ void OverlayMenu::BuildSGSRTab() {
     if (!cfg.enabled) return;
     const char* modes[] = { "Off", "SGSR 1 (Spatial)", "SGSR 2 (Temporal)" }; int modeIdx = (int)cfg.sgsr_mode;
     if (ImGui::Combo("Mode", &modeIdx, modes, 3)) cfg.sgsr_mode = (SGSRMode)modeIdx;
+
+    ImGui::Separator();
+    ImGui::Text("Quality Preset:");
     const char* qualities[] = { "Ultra Quality (77%)", "Quality (67%)", "Balanced (59%)", "Performance (50%)", "Ultra Perf (33%)" }; int qIdx = (int)cfg.quality;
-    if (ImGui::Combo("Quality", &qIdx, qualities, 5)) { cfg.quality = (Quality)qIdx; cfg.ApplyRenderScale(); }
-    float scale = cfg.GetRenderScale(); if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); }
+    if (ImGui::Combo("Quality", &qIdx, qualities, 5)) { cfg.quality = (Quality)qIdx; cfg.custom_scale = 0.0f; cfg.ApplyRenderScale(); }
+
+    ImGui::Separator();
+    ImGui::Text("Target Resolution:");
+    // Common resolution presets
+    const char* resPresets[] = {
+        "Native (100%%)", "1440x810 (75%%)", "1280x720 (67%%)",
+        "1152x648 (60%%)", "1024x576 (53%%)", "960x540 (50%%)",
+        "800x450 (42%%)", "640x360 (33%%)", "Custom..."
+    };
+    static int resIdx = 8; // default to Custom
+    if (ImGui::Combo("Resolution", &resIdx, resPresets, 9)) {
+        const float scales[] = { 1.0f, 0.75f, 0.67f, 0.60f, 0.53f, 0.50f, 0.42f, 0.33f, 0.0f };
+        if (resIdx < 8) {
+            cfg.custom_scale = scales[resIdx];
+            cfg.ApplyRenderScale();
+        }
+    }
+
+    float scale = cfg.GetRenderScale();
+    if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); resIdx = 8; }
     if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {}
 #endif
 }
@@ -263,8 +304,17 @@ void OverlayMenu::BuildFGTab() {
 void OverlayMenu::BuildDisplayTab() {
 #ifdef ADRENA_OVERLAY_ENABLED
     auto& cfg = GetConfig();
-    if (ImGui::Checkbox("Show HUD (FPS/GPU/RAM)", &cfg.fps_display)) {}
+    if (ImGui::Checkbox("Show HUD", &cfg.fps_display)) {}
+
+    // HUD mode toggle
+    const char* hudModes[] = { "Vertical (Detailed)", "Horizontal (Compact)" };
+    int hudIdx = m_hudHorizontal ? 1 : 0;
+    if (ImGui::Combo("HUD Layout", &hudIdx, hudModes, 2)) m_hudHorizontal = (hudIdx == 1);
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Tip: Double-click HUD to toggle layout");
+
+    ImGui::Separator();
     if (ImGui::SliderFloat("Overlay Opacity", &cfg.overlay_opacity, 0.3f, 1.0f, "%.2f")) ImGui::GetStyle().Alpha = cfg.overlay_opacity;
+
     ImGui::Separator();
     ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "Current Stats:");
     ImGui::Text("FPS: %.0f | Frame Time: %.1f ms", m_fps, m_frameTime);

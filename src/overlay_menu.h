@@ -47,6 +47,7 @@ private:
     float m_fps = 0.0f; float m_frameTime = 0.0f;
     uint64_t m_frameCount = 0; double m_lastFpsTime = 0.0; uint64_t m_lastFpsFrames = 0;
     double m_startTime = 0.0; bool m_startupNotifShown = false;
+    bool m_hudHorizontal = false; // false=vertical, true=horizontal
 };
 
 OverlayMenu& GetOverlayMenu();
