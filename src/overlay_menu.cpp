@@ -111,7 +111,7 @@ void OverlayMenu::DrawHUD() {
             ImGui::SameLine(); ImGui::Text("| RAM:%lluMB", usedMB);
         }
         if (cfg.enabled && cfg.sgsr_mode != SGSRMode::Off) {
-            ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR ON");
+            ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "| SGSR %.0f%%", cfg.render_scale * 100.0f);
         }
     } else {
         // ── Vertical mode: multi-line ──
@@ -133,6 +133,10 @@ void OverlayMenu::DrawHUD() {
             ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "SGSR: ON (%.0f%%)", cfg.render_scale * 100.0f);
         } else {
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "SGSR: OFF");
+        }
+
+        if (cfg.fg_mode != FGMode::X1) {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "FG: x%d", (int)cfg.fg_mode + 1);
         }
     }
 
@@ -286,18 +290,36 @@ void OverlayMenu::BuildSGSRTab() {
     float scale = cfg.GetRenderScale();
     if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) { cfg.custom_scale = scale; cfg.ApplyRenderScale(); resIdx = 8; }
     if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {}
+
+    // Show current render resolution info
+    ImGui::Separator();
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Current: %.0f%% scale (sharpness %.2f)",
+                       cfg.render_scale * 100.0f, cfg.sharpness);
+    if (cfg.render_scale < 0.99f) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Mode: Upscale + Sharpen");
+    } else {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Mode: Sharpen only (native)");
+    }
 #endif
 }
 
 void OverlayMenu::BuildFGTab() {
 #ifdef ADRENA_OVERLAY_ENABLED
     auto& cfg = GetConfig();
-    const char* fgModes[] = { "x1 (Off)", "x2 (2x FPS)", "x3 (3x FPS)", "x4 (4x FPS)" }; int fgIdx = (int)cfg.fg_mode;
-    if (ImGui::Combo("Frame Generation", &fgIdx, fgModes, 4)) cfg.fg_mode = (FGMode)fgIdx;
-    if (cfg.fg_mode == FGMode::X1) return;
+    const char* fgModes[] = { "x1 (Off)", "x2 (2x FPS)", "x3 (3x FPS)", "x4 (4x FPS)", "x5 (5x FPS)", "x6 (6x FPS)" }; int fgIdx = (int)cfg.fg_mode;
+    if (ImGui::Combo("Frame Generation", &fgIdx, fgModes, 6)) cfg.fg_mode = (FGMode)fgIdx;
+    if (cfg.fg_mode == FGMode::X1) {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Frame Generation disabled");
+        return;
+    }
     const char* mq[] = { "Low", "Medium", "High" }; int mqIdx = (int)cfg.motion_quality;
     if (ImGui::Combo("Motion Quality", &mqIdx, mq, 3)) cfg.motion_quality = (MotionQuality)mqIdx;
     if (ImGui::SliderInt("Auto-disable FPS", &cfg.fps_threshold, 0, 120, cfg.fps_threshold == 0 ? "Off" : "%d FPS")) {}
+
+    ImGui::Separator();
+    int multiplier = (int)cfg.fg_mode + 1;
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "FG Active: x%d (%d extra presents per frame)", multiplier, multiplier - 1);
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Extra presents improve Vulkan/VKD3D frame pacing");
 #endif
 }
 

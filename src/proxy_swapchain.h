@@ -64,10 +64,14 @@ private:
     void TeardownResources();
     void ProcessSGSR11();
     void ProcessSGSR12();
+    void ProcessFrameGen12();
+    void InitFG12();
+    void ExecuteFGInterpolate(float t);
     void RenderOverlay();
     void InitD3D12Compute();
     void ExecuteD3D12Compute();
     void HookWindow(HWND hwnd);
+    void CheckConfigChange();
     static LRESULT CALLBACK WndProcHook(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
     IDXGISwapChain4*    m_real;
@@ -94,6 +98,14 @@ private:
     HANDLE              m_fenceEvent = nullptr;
     UINT64              m_fenceValue = 0;
 
+    // D3D12 Frame Generation Pipeline
+    ID3D12PipelineState* m_fgInterpolatePSO = nullptr;
+    ID3D12RootSignature* m_fgRootSig = nullptr;
+    ID3D12Resource*      m_prevFrameTex = nullptr;
+    ID3D12DescriptorHeap* m_fgHeap = nullptr;
+    bool                 m_fgInitialized = false;
+    bool                 m_fgHasHistory = false;
+
     // D3D12 Overlay Pipeline
     ID3D12CommandAllocator* m_overlayCmdAlloc = nullptr;
     ID3D12GraphicsCommandList* m_overlayCmdList = nullptr;
@@ -111,6 +123,7 @@ private:
     UINT                m_renderWidth = 0, m_renderHeight = 0;
     UINT                m_displayWidth = 0, m_displayHeight = 0;
     DXGI_FORMAT         m_format = DXGI_FORMAT_UNKNOWN;
+    float               m_lastRenderScale = 0.0f;
 };
 
 } // namespace adrena

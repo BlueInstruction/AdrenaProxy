@@ -7,11 +7,11 @@ namespace adrena {
 
 enum class SGSRMode     { Off, SGSR1, SGSR2 };
 enum class Quality      { UltraQuality, Quality, Balanced, Performance, UltraPerformance };
-enum class FGMode       { X1, X2, X3, X4 };
+enum class FGMode       { X1, X2, X3, X4, X5, X6 };
 enum class MotionQuality{ Low, Medium, High };
 
 struct Config {
-    bool      enabled       = true;
+    bool      enabled       = false;
     SGSRMode  sgsr_mode     = SGSRMode::SGSR1;
     Quality   quality       = Quality::Quality;
     float     custom_scale  = 0.0f;
