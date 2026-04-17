@@ -1,11 +1,8 @@
 #pragma once
 #include <windows.h>
+#include <d3d12.h>
+#include <dxgi1_4.h>
 #include <cstdint>
-
-struct ID3D12Device;
-struct ID3D12GraphicsCommandList;
-struct ID3D12CommandQueue;
-struct IDXGISwapChain3;
 
 namespace adrena {
 

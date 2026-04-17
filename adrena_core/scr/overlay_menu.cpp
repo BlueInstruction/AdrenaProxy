@@ -10,6 +10,8 @@
 #include <imgui_impl_dx12.h>
 #endif
 #include <imgui_impl_dx11.h>
+// Forward declaration for ImGui Win32 WndProc handler
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
 #include <d3d12.h>
@@ -644,30 +646,6 @@ LRESULT CALLBACK OverlayMenu::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // Forward input to ImGui
     if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp))
         return true;
-
-    // Toggle overlay on hotkey
-    if (msg == WM_KEYDOWN) {
-        Config& cfg = GetConfig();
-        if (wp == cfg.toggle_key) {
-            // The actual toggle is handled by ProxySwapChain::StaticWndProc
-            // which calls m_overlay->Toggle()
-            return true;
-        }
-    }
-
-    // Block input when overlay is visible (prevent game from receiving it)
-    if (s_instance && s_instance->m_visible) {
-        switch (msg) {
-        case WM_MOUSEMOVE:
-        case WM_LBUTTONDOWN: case WM_LBUTTONUP:
-        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
-        case WM_MBUTTONDOWN: case WM_MBUTTONUP:
-        case WM_MOUSEWHEEL: case WM_MOUSEHWHEEL:
-        case WM_KEYDOWN: case WM_KEYUP:
-        case WM_CHAR:
-            return true; // Consume input
-        }
-    }
 #endif
     return 0;
 }

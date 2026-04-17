@@ -5,20 +5,17 @@
 
 namespace adrena {
 
-// D3D12 resource barrier helper for MinGW compatibility
-struct SGSR2Barrier : D3D12_RESOURCE_BARRIER {
-    static SGSR2Barrier Transition(ID3D12Resource* res,
-        D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
-        UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
-        SGSR2Barrier b{};
-        b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource = res;
-        b.Transition.StateBefore = before;
-        b.Transition.StateAfter = after;
-        b.Transition.Subresource = sub;
-        return b;
-    }
-};
+static D3D12_RESOURCE_BARRIER MakeTransitionBarrier(ID3D12Resource* res,
+    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
+    UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
+    D3D12_RESOURCE_BARRIER b = {};
+    b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource = res;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter = after;
+    b.Transition.Subresource = sub;
+    return b;
+}
 
 SGSR2Pass::~SGSR2Pass() { Shutdown(); }
 
@@ -125,7 +122,7 @@ bool SGSR2Pass::Resize(uint32_t rW, uint32_t rH, uint32_t dW, uint32_t dH) {
 void SGSR2Pass::Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                            D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     if (before == after) return;
-    auto b = SGSR2Barrier::Transition(res, before, after);
+    auto b = MakeTransitionBarrier(res, before, after);
     cl->ResourceBarrier(1, &b);
 }
 
