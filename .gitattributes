@@ -1,35 +1,20 @@
-# Auto detect text files and perform LF normalization
 * text=auto
-
-# Force LF for files used in Linux/cross-compile build environment
-*.sh        text eol=lf
-*.cmake     text eol=lf
+*.sh text eol=lf
+*.cmake text eol=lf
 CMakeLists.txt text eol=lf
-*.yml       text eol=lf
-*.ini       text eol=lf
-*.md        text eol=lf
-LICENSE     text eol=lf
-.gitignore  text eol=lf
-
-# C/C++ sources — LF
-*.h         text eol=lf
-*.cpp       text eol=lf
-*.c         text eol=lf
-
-# HLSL shaders — LF + syntax highlighting
-*.hlsl      text eol=lf linguist-language=HLSL
-
-# Linker definition files
-*.def       text eol=lf
-
-# Binary files — no line ending conversion
-*.dll       binary
-*.lib       binary
-*.exp       binary
-*.pdb       binary
-*.obj       binary
-*.o         binary
-*.zip       binary
-*.png       binary
-*.jpg       binary
-*.ico       binary
+*.yml text eol=lf
+*.ini text eol=lf
+*.md text eol=lf
+LICENSE text eol=lf
+.gitignore text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.c text eol=lf
+*.hlsl text eol=lf linguist-language=HLSL
+*.def text eol=lf
+*.bat text eol=crlf
+*.dll binary
+*.lib binary
+*.pdb binary
+*.obj binary
+*.o binary
