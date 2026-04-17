@@ -107,7 +107,7 @@ if(MSVC)
 endif()
 
 target_link_libraries(adxgi PRIVATE
-    dxgi d3d11 d3d12 d3dcompiler user32 kernel32 psapi dxguid
+    dxgi d3d11 d3d12 d3dcompiler user32 kernel32 psapi dxguid dwmapi
 )
 
 set_target_properties(adxgi PROPERTIES

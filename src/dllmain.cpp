@@ -73,11 +73,18 @@ HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory)
     return hr;
 }
 
+// Use explicit function pointer types to avoid reliance on MinGW header declarations
+typedef HRESULT(WINAPI* PFN_DXGID3D10CreateDevice)(HMODULE, IDXGIFactory*, IDXGIAdapter*, UINT, void*, void**);
+typedef HRESULT(WINAPI* PFN_DXGID3D10CreateDeviceAndSwapChain)(HMODULE, IDXGIFactory*, IDXGIAdapter*, UINT, void*, void*, void**, void**);
+typedef void(WINAPI* PFN_DXGID3D10RegisterLayers)(void*, UINT);
+typedef HRESULT(WINAPI* PFN_DXGIGetDebugInterface1)(UINT, REFIID, void**);
+typedef HRESULT(WINAPI* PFN_DXGIReportAdapterConfiguration)(UINT);
+
 HRESULT WINAPI DXGID3D10CreateDevice(HMODULE hModule, IDXGIFactory* pFactory,
     IDXGIAdapter* pAdapter, UINT Flags, void* pUnknown, void** ppDevice)
 {
     if (!LoadRealDXGI()) return E_FAIL;
-    auto fn = (decltype(&DXGID3D10CreateDevice))GetProcAddress(g_realDXGI, "DXGID3D10CreateDevice");
+    auto fn = (PFN_DXGID3D10CreateDevice)GetProcAddress(g_realDXGI, "DXGID3D10CreateDevice");
     return fn ? fn(hModule, pFactory, pAdapter, Flags, pUnknown, ppDevice) : E_NOTIMPL;
 }
 
@@ -86,15 +93,29 @@ HRESULT WINAPI DXGID3D10CreateDeviceAndSwapChain(HMODULE hModule, IDXGIFactory* 
     void** ppSwapChain, void** ppDevice)
 {
     if (!LoadRealDXGI()) return E_FAIL;
-    auto fn = (decltype(&DXGID3D10CreateDeviceAndSwapChain))GetProcAddress(g_realDXGI, "DXGID3D10CreateDeviceAndSwapChain");
+    auto fn = (PFN_DXGID3D10CreateDeviceAndSwapChain)GetProcAddress(g_realDXGI, "DXGID3D10CreateDeviceAndSwapChain");
     return fn ? fn(hModule, pFactory, pAdapter, Flags, pUnknown, pSwapChainDesc, ppSwapChain, ppDevice) : E_NOTIMPL;
 }
 
 void WINAPI DXGID3D10RegisterLayers(void* pLayers, UINT uiLayers)
 {
     if (!LoadRealDXGI()) return;
-    auto fn = (decltype(&DXGID3D10RegisterLayers))GetProcAddress(g_realDXGI, "DXGID3D10RegisterLayers");
+    auto fn = (PFN_DXGID3D10RegisterLayers)GetProcAddress(g_realDXGI, "DXGID3D10RegisterLayers");
     if (fn) fn(pLayers, uiLayers);
+}
+
+HRESULT WINAPI DXGIGetDebugInterface1(UINT Flags, REFIID riid, void** ppDebug)
+{
+    if (!LoadRealDXGI()) return E_FAIL;
+    auto fn = (PFN_DXGIGetDebugInterface1)GetProcAddress(g_realDXGI, "DXGIGetDebugInterface1");
+    return fn ? fn(Flags, riid, ppDebug) : E_NOTIMPL;
+}
+
+HRESULT WINAPI DXGIReportAdapterConfiguration(UINT AdapterIndex)
+{
+    if (!LoadRealDXGI()) return E_FAIL;
+    auto fn = (PFN_DXGIReportAdapterConfiguration)GetProcAddress(g_realDXGI, "DXGIReportAdapterConfiguration");
+    return fn ? fn(AdapterIndex) : E_NOTIMPL;
 }
 
 // ─── DllMain ────────────────────────────────────────

@@ -17,8 +17,8 @@
 #include <d3d12.h>
 #endif
 
-// Forward declaration — required for ImGui v1.91.6-docking
-extern "C" LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+// Forward declaration — required for ImGui v1.91.6-docking (C++ linkage, not extern "C")
+LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
 namespace adrena {
