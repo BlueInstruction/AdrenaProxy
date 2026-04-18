@@ -4,6 +4,9 @@
 #include <dxgi1_4.h>
 #include <cstdint>
 
+// Forward declare ImVec4 for DrawStatusBadge
+struct ImVec4;
+
 namespace adrena {
 
 class OverlayMenu {

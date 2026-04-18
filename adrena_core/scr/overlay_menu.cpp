@@ -729,9 +729,8 @@ void OverlayMenu::RenderHUD(int width, int height) {
     if (now - s_lastSys > 1.5f) {
         MEMORYSTATUSEX m = {}; m.dwLength = sizeof(m);
         if (GlobalMemoryStatusEx(&m)) {
-            s_ramUsed  = (m.ullTotalPhys - m.ullAvailPhys) / (1024*1024*1024ULL ? 1 : 1024*1024);
+            s_ramUsed  = (m.ullTotalPhys - m.ullAvailPhys) / (1024*1024);
             s_ramTotal = m.ullTotalPhys / (1024*1024);
-            // keep in MB for precision
         }
         s_lastSys = now;
     }
@@ -876,7 +875,7 @@ void OverlayMenu::RenderHUD(int width, int height) {
 
         // Draw background capsule behind everything
         dl->AddRectFilled(ImVec2(x - 2, y - 1), ImVec2(x + totalW + 2, y + h + 1),
-            ImVec4(0, 0, 0, 0), 6.0f);
+            ImGui::ColorConvertFloat4ToU32(ImVec4(0, 0, 0, 0)), 6.0f);
 
         float cx = x;
         for (int i = 0; i < nSeg; i++) {
