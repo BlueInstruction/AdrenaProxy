@@ -23,7 +23,5 @@ if(MSVC)
         LINK_FLAGS "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/dxgi.def"
     )
 else()
-    set_target_properties(dxgi_proxy PROPERTIES
-        LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/dxgi.def"
-    )
+    target_sources(dxgi_proxy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/dxgi.def)
 endif()

@@ -18,7 +18,5 @@ if(MSVC)
         LINK_FLAGS "/DEF:${CMAKE_CURRENT_SOURCE_DIR}/version.def"
     )
 else()
-    set_target_properties(version_proxy PROPERTIES
-        LINK_FLAGS "-Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/version.def"
-    )
+    target_sources(version_proxy PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/version.def)
 endif()
