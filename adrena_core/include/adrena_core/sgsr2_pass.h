@@ -5,22 +5,13 @@
 
 namespace adrena {
 
-// SGSR2 Temporal Upscaling — Experimental Stub
-//
-// SGSR2 requires depth buffer + motion vectors from the game engine,
-// which are only available through the DLSS proxy path (DLSS_Evaluate).
-// When a DLSS-compatible game provides these textures, SGSR2 can perform
-// temporal accumulation for higher quality than SGSR1 spatial-only.
-//
-// Current status: Pipeline structure is ready, temporal accumulation
-// logic needs implementation based on Qualcomm's SGSR2 algorithm.
-
+// SGSR2 Parameters matching the official Qualcomm 2-pass variant
 struct SGSR2Params {
-    ID3D12Resource* color       = nullptr;  // Current low-res color
-    ID3D12Resource* depth       = nullptr;  // Current depth buffer
-    ID3D12Resource* motion      = nullptr;  // Motion vectors
-    ID3D12Resource* exposure    = nullptr;  // Optional exposure texture
-    ID3D12Resource* output      = nullptr;  // Upscaled output target
+    ID3D12Resource* color       = nullptr;
+    ID3D12Resource* depth       = nullptr;
+    ID3D12Resource* motion      = nullptr;
+    ID3D12Resource* exposure    = nullptr;
+    ID3D12Resource* output      = nullptr;
 
     float    deltaTime          = 0.0f;
     uint32_t renderWidth        = 0;
@@ -30,13 +21,18 @@ struct SGSR2Params {
     float    sharpness          = 0.80f;
     bool     resetHistory       = false;
 
-    float    jitterX            = 0.0f;     // Sub-pixel jitter offset
+    float    jitterX            = 0.0f;
     float    jitterY            = 0.0f;
+    float    preExposure        = 1.0f;
     float    cameraNear         = 0.01f;
     float    cameraFar          = 1000.0f;
-    float    cameraFovY         = 1.0472f;  // 60 degrees
+    float    cameraFovAngleHor  = 1.0472f;
+    float    minLerpContribution= 0.15f;
+    bool     bSameCamera        = true;
+    int32_t  motionVectorScale  = 1;
 
-    int32_t  motionVectorScale  = 1;        // 0=pixel, 1=screen-space
+    // clipToPrevClip matrix (4x4 row-major as 4 float4)
+    float    clipToPrevClip[4][4] = {};
 };
 
 class SGSR2Pass {
@@ -57,28 +53,33 @@ public:
     bool IsInitialized() const { return m_initialized; }
 
 private:
-    bool CreateReprojectPipeline();
+    bool CreateConvertPipeline();
     bool CreateUpscalePipeline();
-    bool CreateHistoryResource();
-
+    bool CreateIntermediateResources();
     void Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                     D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after);
 
     ID3D12Device*           m_device       = nullptr;
-    ID3D12RootSignature*    m_reprojectSig = nullptr;
-    ID3D12PipelineState*    m_reprojectPSO = nullptr;
+    ID3D12RootSignature*    m_convertSig   = nullptr;
+    ID3D12PipelineState*    m_convertPSO   = nullptr;
     ID3D12RootSignature*    m_upscaleSig   = nullptr;
     ID3D12PipelineState*    m_upscalePSO   = nullptr;
     ID3D12DescriptorHeap*   m_srvHeap      = nullptr;
     ID3D12DescriptorHeap*   m_samplerHeap  = nullptr;
-    ID3D12Resource*         m_historyTex   = nullptr;  // Previous frame accumulation
-    ID3D12Resource*         m_tempTex      = nullptr;  // Intermediate reproject result
+
+    // Intermediate resources from convert pass
+    ID3D12Resource*         m_motionDepthClip = nullptr;  // RGBA16F
+    ID3D12Resource*         m_yCocgColor      = nullptr;  // R32UI
+
+    // History textures (swapped each frame)
+    ID3D12Resource*         m_history[2]   = {nullptr, nullptr};
+    int                     m_historyIdx   = 0;
 
     uint32_t m_renderW = 0, m_renderH = 0;
     uint32_t m_displayW = 0, m_displayH = 0;
     DXGI_FORMAT m_format = DXGI_FORMAT_UNKNOWN;
     bool m_initialized = false;
-    bool m_historyValid = false;   // First frame has no history
+    bool m_historyValid = false;
 };
 
 } // namespace adrena
