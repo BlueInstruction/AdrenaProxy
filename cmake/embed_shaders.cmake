@@ -4,9 +4,9 @@ function(embed_hlsl_shaders target)
     file(MAKE_DIRECTORY ${GEN_DIR})
 
     set(SHADER_FILES
-        sgsr1_easu.hlsl
+        sgsr1_official.hlsl
         sgsr1_rcas.hlsl
-        sgsr2_reproject.hlsl
+        sgsr2_convert.hlsl
         sgsr2_upscale.hlsl
         fg_interpolate.hlsl
     )
