@@ -80,7 +80,10 @@ static HRESULT WrapFactory(REFIID riid, void** ppv) {
 
 extern "C" {
 
-__declspec(dllexport) HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory) {
+// No __declspec(dllexport) — the .def file handles exports.
+// Using dllexport would conflict with dxgi.h declarations on MSVC.
+
+HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory) {
     AD_LOG_I("CreateDXGIFactory called");
     auto fn = GetRealProc<PFN_CreateDXGIFactory>("CreateDXGIFactory");
     if (!fn) return E_FAIL;
@@ -89,7 +92,7 @@ __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFac
     return hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory) {
+HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory) {
     AD_LOG_I("CreateDXGIFactory1 called");
     auto fn = GetRealProc<PFN_CreateDXGIFactory1>("CreateDXGIFactory1");
     if (!fn) return E_FAIL;
@@ -98,7 +101,7 @@ __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFa
     return hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory) {
+HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory) {
     AD_LOG_I("CreateDXGIFactory2 called: Flags=0x%X", Flags);
     auto fn = GetRealProc<PFN_CreateDXGIFactory2>("CreateDXGIFactory2");
     if (!fn) return E_FAIL;
@@ -107,13 +110,15 @@ __declspec(dllexport) HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid,
     return hr;
 }
 
-__declspec(dllexport) HRESULT WINAPI DXGID3D10CreateDevice() {
-    auto fn = GetRealProc<decltype(&DXGID3D10CreateDevice)>("DXGID3D10CreateDevice");
+HRESULT WINAPI DXGID3D10CreateDevice() {
+    typedef HRESULT(WINAPI* PFN)();
+    auto fn = GetRealProc<PFN>("DXGID3D10CreateDevice");
     return fn ? fn() : E_NOTIMPL;
 }
 
-__declspec(dllexport) HRESULT WINAPI DXGID3D10RegisterLayers() {
-    auto fn = GetRealProc<decltype(&DXGID3D10RegisterLayers)>("DXGID3D10RegisterLayers");
+HRESULT WINAPI DXGID3D10RegisterLayers() {
+    typedef HRESULT(WINAPI* PFN)();
+    auto fn = GetRealProc<PFN>("DXGID3D10RegisterLayers");
     return fn ? fn() : E_NOTIMPL;
 }
 

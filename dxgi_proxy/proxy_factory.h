@@ -24,7 +24,7 @@ public:
     HRESULT STDMETHODCALLTYPE MakeWindowAssociation(HWND, UINT) override;
     HRESULT STDMETHODCALLTYPE GetWindowAssociation(HWND*) override;
     HRESULT STDMETHODCALLTYPE CreateSwapChain(IUnknown*, DXGI_SWAP_CHAIN_DESC*, IDXGISwapChain**) override;
-    HRESULT STDMETHODCALLTYPE CreateSoftwareAdapter(UINT, IDXGIAdapter**) override;
+    HRESULT STDMETHODCALLTYPE CreateSoftwareAdapter(HMODULE, IDXGIAdapter**) override;
 
     // IDXGIFactory1
     HRESULT STDMETHODCALLTYPE EnumAdapters1(UINT, IDXGIAdapter1**) override;
@@ -39,10 +39,10 @@ public:
     HRESULT STDMETHODCALLTYPE GetSharedResourceAdapterLuid(HANDLE, LUID*) override;
     HRESULT STDMETHODCALLTYPE RegisterStereoStatusWindow(HWND, UINT, DWORD*) override;
     HRESULT STDMETHODCALLTYPE RegisterStereoStatusEvent(HANDLE, DWORD*) override;
-    HRESULT STDMETHODCALLTYPE UnregisterStereoStatus(DWORD) override;
+    void    STDMETHODCALLTYPE UnregisterStereoStatus(DWORD) override;
     HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusWindow(HWND, UINT, DWORD*) override;
     HRESULT STDMETHODCALLTYPE RegisterOcclusionStatusEvent(HANDLE, DWORD*) override;
-    HRESULT STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD) override;
+    void    STDMETHODCALLTYPE UnregisterOcclusionStatus(DWORD) override;
     HRESULT STDMETHODCALLTYPE CreateSwapChainForComposition(IUnknown*,
         const DXGI_SWAP_CHAIN_DESC1*, IDXGIOutput*, IDXGISwapChain1**) override;
 

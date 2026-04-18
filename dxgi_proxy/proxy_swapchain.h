@@ -26,6 +26,9 @@ public:
     HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID, UINT*, void*) override;
     HRESULT STDMETHODCALLTYPE GetParent(REFIID, void**) override;
 
+    // IDXGIDeviceSubObject
+    HRESULT STDMETHODCALLTYPE GetDevice(REFIID, void**) override;
+
     // IDXGISwapChain
     HRESULT STDMETHODCALLTYPE Present(UINT, UINT) override;
     HRESULT STDMETHODCALLTYPE GetBuffer(UINT, REFIID, void**) override;

@@ -43,17 +43,17 @@ HRESULT ProxyFactory::GetParent(REFIID r, void** p) { PASS_THROUGH(GetParent, r,
 HRESULT ProxyFactory::EnumAdapters(UINT i, IDXGIAdapter** a) { PASS_THROUGH(EnumAdapters, i, a); }
 HRESULT ProxyFactory::MakeWindowAssociation(HWND h, UINT f) { PASS_THROUGH(MakeWindowAssociation, h, f); }
 HRESULT ProxyFactory::GetWindowAssociation(HWND* h) { PASS_THROUGH(GetWindowAssociation, h); }
-HRESULT ProxyFactory::CreateSoftwareAdapter(UINT i, IDXGIAdapter** a) { PASS_THROUGH(CreateSoftwareAdapter, i, a); }
+HRESULT ProxyFactory::CreateSoftwareAdapter(HMODULE h, IDXGIAdapter** a) { PASS_THROUGH(CreateSoftwareAdapter, h, a); }
 HRESULT ProxyFactory::EnumAdapters1(UINT i, IDXGIAdapter1** a) { PASS_THROUGH(EnumAdapters1, i, a); }
 BOOL ProxyFactory::IsCurrent() { return m_real->IsCurrent(); }
 BOOL ProxyFactory::IsWindowedStereoEnabled() { return m_real->IsWindowedStereoEnabled(); }
 HRESULT ProxyFactory::GetSharedResourceAdapterLuid(HANDLE h, LUID* l) { PASS_THROUGH(GetSharedResourceAdapterLuid, h, l); }
 HRESULT ProxyFactory::RegisterStereoStatusWindow(HWND h, UINT u, DWORD* d) { PASS_THROUGH(RegisterStereoStatusWindow, h, u, d); }
 HRESULT ProxyFactory::RegisterStereoStatusEvent(HANDLE h, DWORD* d) { PASS_THROUGH(RegisterStereoStatusEvent, h, d); }
-HRESULT ProxyFactory::UnregisterStereoStatus(DWORD d) { PASS_THROUGH(UnregisterStereoStatus, d); }
+void ProxyFactory::UnregisterStereoStatus(DWORD d) { m_real->UnregisterStereoStatus(d); }
 HRESULT ProxyFactory::RegisterOcclusionStatusWindow(HWND h, UINT u, DWORD* d) { PASS_THROUGH(RegisterOcclusionStatusWindow, h, u, d); }
 HRESULT ProxyFactory::RegisterOcclusionStatusEvent(HANDLE h, DWORD* d) { PASS_THROUGH(RegisterOcclusionStatusEvent, h, d); }
-HRESULT ProxyFactory::UnregisterOcclusionStatus(DWORD d) { PASS_THROUGH(UnregisterOcclusionStatus, d); }
+void ProxyFactory::UnregisterOcclusionStatus(DWORD d) { m_real->UnregisterOcclusionStatus(d); }
 UINT ProxyFactory::GetCreationFlags() { return m_real->GetCreationFlags(); }
 HRESULT ProxyFactory::EnumAdapterByLuid(LUID l, REFIID r, void** p) { PASS_THROUGH(EnumAdapterByLuid, l, r, p); }
 HRESULT ProxyFactory::EnumWarpAdapter(REFIID r, void** p) { PASS_THROUGH(EnumWarpAdapter, r, p); }

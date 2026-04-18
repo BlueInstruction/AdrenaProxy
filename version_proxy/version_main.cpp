@@ -67,92 +67,69 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
 }
 
 // ── Forward all version.dll exports ──
+// No __declspec(dllexport) — the .def file handles exports.
+// Use explicit function pointer types to avoid decltype conflicts with winver.h.
+
+typedef BOOL   (WINAPI* PFN_GFVIA)(LPCSTR, DWORD, DWORD, LPVOID);
+typedef BOOL   (WINAPI* PFN_GFVIBH)(DWORD, DWORD, LPVOID);
 
 extern "C" {
 
-__declspec(dllexport) BOOL WINAPI GetFileVersionInfoA(LPCSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoA)>("GetFileVersionInfoA");
+BOOL WINAPI ap_GetFileVersionInfoA(LPCSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
+    auto fn = GetReal<PFN_GFVIA>("GetFileVersionInfoA");
     return fn ? fn(lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
 }
 
-__declspec(dllexport) BOOL WINAPI GetFileVersionInfoByHandle(DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoByHandle)>("GetFileVersionInfoByHandle");
+BOOL WINAPI ap_GetFileVersionInfoByHandle(DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
+    auto fn = GetReal<PFN_GFVIBH>("GetFileVersionInfoByHandle");
     return fn ? fn(dwHandle, dwLen, lpData) : FALSE;
 }
 
-__declspec(dllexport) BOOL WINAPI GetFileVersionInfoExA(DWORD dwFlags, LPCSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoExA)>("GetFileVersionInfoExA");
-    return fn ? fn(dwFlags, lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
-}
+typedef BOOL   (WINAPI* PFN_GFVIEA)(DWORD, LPCSTR, DWORD, DWORD, LPVOID);
+typedef BOOL   (WINAPI* PFN_GFVIEW)(DWORD, LPCWSTR, DWORD, DWORD, LPVOID);
+typedef DWORD  (WINAPI* PFN_GFVISA)(LPCSTR, LPDWORD);
+typedef DWORD  (WINAPI* PFN_GFVISEA)(DWORD, LPCSTR, LPDWORD);
+typedef DWORD  (WINAPI* PFN_GFVISEW)(DWORD, LPCWSTR, LPDWORD);
+typedef DWORD  (WINAPI* PFN_GFVISW)(LPCWSTR, LPDWORD);
+typedef BOOL   (WINAPI* PFN_GFVIW)(LPCWSTR, DWORD, DWORD, LPVOID);
+typedef DWORD  (WINAPI* PFN_VFFA)(DWORD, LPCSTR, LPCSTR, LPCSTR, LPSTR, PUINT, LPSTR, PUINT);
+typedef DWORD  (WINAPI* PFN_VFFW)(DWORD, LPCWSTR, LPCWSTR, LPCWSTR, LPWSTR, PUINT, LPWSTR, PUINT);
+typedef DWORD  (WINAPI* PFN_VIFA)(DWORD, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPCSTR, LPSTR, PUINT);
+typedef DWORD  (WINAPI* PFN_VIFW)(DWORD, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPCWSTR, LPWSTR, PUINT);
+typedef DWORD  (WINAPI* PFN_VLNA)(DWORD, LPSTR, UINT);
+typedef DWORD  (WINAPI* PFN_VLNW)(DWORD, LPWSTR, UINT);
+typedef BOOL   (WINAPI* PFN_VQVA)(LPCVOID, LPCSTR, LPVOID*, PUINT);
+typedef BOOL   (WINAPI* PFN_VQVW)(LPCVOID, LPCWSTR, LPVOID*, PUINT);
 
-__declspec(dllexport) BOOL WINAPI GetFileVersionInfoExW(DWORD dwFlags, LPCWSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoExW)>("GetFileVersionInfoExW");
-    return fn ? fn(dwFlags, lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
-}
-
-__declspec(dllexport) DWORD WINAPI GetFileVersionInfoSizeA(LPCSTR lptstrFilename, LPDWORD lpdwHandle) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoSizeA)>("GetFileVersionInfoSizeA");
-    return fn ? fn(lptstrFilename, lpdwHandle) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI GetFileVersionInfoSizeExA(DWORD dwFlags, LPCSTR lptstrFilename, LPDWORD lpdwHandle) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoSizeExA)>("GetFileVersionInfoSizeExA");
-    return fn ? fn(dwFlags, lptstrFilename, lpdwHandle) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI GetFileVersionInfoSizeExW(DWORD dwFlags, LPCWSTR lptstrFilename, LPDWORD lpdwHandle) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoSizeExW)>("GetFileVersionInfoSizeExW");
-    return fn ? fn(dwFlags, lptstrFilename, lpdwHandle) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI GetFileVersionInfoSizeW(LPCWSTR lptstrFilename, LPDWORD lpdwHandle) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoSizeW)>("GetFileVersionInfoSizeW");
-    return fn ? fn(lptstrFilename, lpdwHandle) : 0;
-}
-
-__declspec(dllexport) BOOL WINAPI GetFileVersionInfoW(LPCWSTR lptstrFilename, DWORD dwHandle, DWORD dwLen, LPVOID lpData) {
-    auto fn = GetReal<decltype(&GetFileVersionInfoW)>("GetFileVersionInfoW");
-    return fn ? fn(lptstrFilename, dwHandle, dwLen, lpData) : FALSE;
-}
-
-__declspec(dllexport) DWORD WINAPI VerFindFileA(DWORD dwFlags, LPCSTR lptstrFilename, LPCSTR lptstrWinDir, LPCSTR lptstrAppDir, LPSTR lptstrCurDir, PUINT lpuCurDirLen, LPSTR lptstrInstDir, PUINT lpuInstDirLen) {
-    auto fn = GetReal<decltype(&VerFindFileA)>("VerFindFileA");
-    return fn ? fn(dwFlags, lptstrFilename, lptstrWinDir, lptstrAppDir, lptstrCurDir, lpuCurDirLen, lptstrInstDir, lpuInstDirLen) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI VerFindFileW(DWORD dwFlags, LPCWSTR lptstrFilename, LPCWSTR lptstrWinDir, LPCWSTR lptstrAppDir, LPWSTR lptstrCurDir, PUINT lpuCurDirLen, LPWSTR lptstrInstDir, PUINT lpuInstDirLen) {
-    auto fn = GetReal<decltype(&VerFindFileW)>("VerFindFileW");
-    return fn ? fn(dwFlags, lptstrFilename, lptstrWinDir, lptstrAppDir, lptstrCurDir, lpuCurDirLen, lptstrInstDir, lpuInstDirLen) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI VerInstallFileA(DWORD dwFlags, LPCSTR lptstrSrcFilename, LPCSTR lptstrDestFilename, LPCSTR lptstrSrcDir, LPCSTR lptstrDestDir, LPCSTR lptstrCurDir, LPSTR lptstrTmpFile, PUINT lpuTmpFileLen) {
-    auto fn = GetReal<decltype(&VerInstallFileA)>("VerInstallFileA");
-    return fn ? fn(dwFlags, lptstrSrcFilename, lptstrDestFilename, lptstrSrcDir, lptstrDestDir, lptstrCurDir, lptstrTmpFile, lpuTmpFileLen) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI VerInstallFileW(DWORD dwFlags, LPCWSTR lptstrSrcFilename, LPCWSTR lptstrDestFilename, LPCWSTR lptstrSrcDir, LPCWSTR lptstrDestDir, LPCWSTR lptstrCurDir, LPWSTR lptstrTmpFile, PUINT lpuTmpFileLen) {
-    auto fn = GetReal<decltype(&VerInstallFileW)>("VerInstallFileW");
-    return fn ? fn(dwFlags, lptstrSrcFilename, lptstrDestFilename, lptstrSrcDir, lptstrDestDir, lptstrCurDir, lptstrTmpFile, lpuTmpFileLen) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI VerLanguageNameA(DWORD wLang, LPSTR szLang, UINT nSize) {
-    auto fn = GetReal<decltype(&VerLanguageNameA)>("VerLanguageNameA");
-    return fn ? fn(wLang, szLang, nSize) : 0;
-}
-
-__declspec(dllexport) DWORD WINAPI VerLanguageNameW(DWORD wLang, LPWSTR szLang, UINT nSize) {
-    auto fn = GetReal<decltype(&VerLanguageNameW)>("VerLanguageNameW");
-    return fn ? fn(wLang, szLang, nSize) : 0;
-}
-
-__declspec(dllexport) BOOL WINAPI VerQueryValueA(LPCVOID pBlock, LPCSTR lpSubBlock, LPVOID* lplpBuffer, PUINT puLen) {
-    auto fn = GetReal<decltype(&VerQueryValueA)>("VerQueryValueA");
-    return fn ? fn(pBlock, lpSubBlock, lplpBuffer, puLen) : FALSE;
-}
-
-__declspec(dllexport) BOOL WINAPI VerQueryValueW(LPCVOID pBlock, LPCWSTR lpSubBlock, LPVOID* lplpBuffer, PUINT puLen) {
-    auto fn = GetReal<decltype(&VerQueryValueW)>("VerQueryValueW");
-    return fn ? fn(pBlock, lpSubBlock, lplpBuffer, puLen) : FALSE;
-}
+BOOL WINAPI ap_GetFileVersionInfoExA(DWORD f, LPCSTR n, DWORD h, DWORD l, LPVOID d) {
+    auto fn = GetReal<PFN_GFVIEA>("GetFileVersionInfoExA"); return fn ? fn(f,n,h,l,d) : FALSE; }
+BOOL WINAPI ap_GetFileVersionInfoExW(DWORD f, LPCWSTR n, DWORD h, DWORD l, LPVOID d) {
+    auto fn = GetReal<PFN_GFVIEW>("GetFileVersionInfoExW"); return fn ? fn(f,n,h,l,d) : FALSE; }
+DWORD WINAPI ap_GetFileVersionInfoSizeA(LPCSTR n, LPDWORD h) {
+    auto fn = GetReal<PFN_GFVISA>("GetFileVersionInfoSizeA"); return fn ? fn(n,h) : 0; }
+DWORD WINAPI ap_GetFileVersionInfoSizeExA(DWORD f, LPCSTR n, LPDWORD h) {
+    auto fn = GetReal<PFN_GFVISEA>("GetFileVersionInfoSizeExA"); return fn ? fn(f,n,h) : 0; }
+DWORD WINAPI ap_GetFileVersionInfoSizeExW(DWORD f, LPCWSTR n, LPDWORD h) {
+    auto fn = GetReal<PFN_GFVISEW>("GetFileVersionInfoSizeExW"); return fn ? fn(f,n,h) : 0; }
+DWORD WINAPI ap_GetFileVersionInfoSizeW(LPCWSTR n, LPDWORD h) {
+    auto fn = GetReal<PFN_GFVISW>("GetFileVersionInfoSizeW"); return fn ? fn(n,h) : 0; }
+BOOL WINAPI ap_GetFileVersionInfoW(LPCWSTR n, DWORD h, DWORD l, LPVOID d) {
+    auto fn = GetReal<PFN_GFVIW>("GetFileVersionInfoW"); return fn ? fn(n,h,l,d) : FALSE; }
+DWORD WINAPI ap_VerFindFileA(DWORD f, LPCSTR n, LPCSTR w, LPCSTR a, LPSTR c, PUINT cl, LPSTR i, PUINT il) {
+    auto fn = GetReal<PFN_VFFA>("VerFindFileA"); return fn ? fn(f,n,w,a,c,cl,i,il) : 0; }
+DWORD WINAPI ap_VerFindFileW(DWORD f, LPCWSTR n, LPCWSTR w, LPCWSTR a, LPWSTR c, PUINT cl, LPWSTR i, PUINT il) {
+    auto fn = GetReal<PFN_VFFW>("VerFindFileW"); return fn ? fn(f,n,w,a,c,cl,i,il) : 0; }
+DWORD WINAPI ap_VerInstallFileA(DWORD f, LPCSTR s, LPCSTR d, LPCSTR sd, LPCSTR dd, LPCSTR cd, LPSTR t, PUINT tl) {
+    auto fn = GetReal<PFN_VIFA>("VerInstallFileA"); return fn ? fn(f,s,d,sd,dd,cd,t,tl) : 0; }
+DWORD WINAPI ap_VerInstallFileW(DWORD f, LPCWSTR s, LPCWSTR d, LPCWSTR sd, LPCWSTR dd, LPCWSTR cd, LPWSTR t, PUINT tl) {
+    auto fn = GetReal<PFN_VIFW>("VerInstallFileW"); return fn ? fn(f,s,d,sd,dd,cd,t,tl) : 0; }
+DWORD WINAPI ap_VerLanguageNameA(DWORD l, LPSTR s, UINT n) {
+    auto fn = GetReal<PFN_VLNA>("VerLanguageNameA"); return fn ? fn(l,s,n) : 0; }
+DWORD WINAPI ap_VerLanguageNameW(DWORD l, LPWSTR s, UINT n) {
+    auto fn = GetReal<PFN_VLNW>("VerLanguageNameW"); return fn ? fn(l,s,n) : 0; }
+BOOL WINAPI ap_VerQueryValueA(LPCVOID b, LPCSTR s, LPVOID* p, PUINT l) {
+    auto fn = GetReal<PFN_VQVA>("VerQueryValueA"); return fn ? fn(b,s,p,l) : FALSE; }
+BOOL WINAPI ap_VerQueryValueW(LPCVOID b, LPCWSTR s, LPVOID* p, PUINT l) {
+    auto fn = GetReal<PFN_VQVW>("VerQueryValueW"); return fn ? fn(b,s,p,l) : FALSE; }
 
 } // extern "C"

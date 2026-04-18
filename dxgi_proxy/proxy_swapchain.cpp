@@ -103,6 +103,8 @@ HRESULT ProxySwapChain::GetPrivateData(REFGUID g, UINT* s, void* d)
     { PT(GetPrivateData, g, s, d); }
 HRESULT ProxySwapChain::GetParent(REFIID r, void** p)
     { PT(GetParent, r, p); }
+HRESULT ProxySwapChain::GetDevice(REFIID r, void** p)
+    { PT(GetDevice, r, p); }
 
 // ── GetBuffer: PASS-THROUGH ──
 // When dlss.dll is active, the game already renders at lower resolution
