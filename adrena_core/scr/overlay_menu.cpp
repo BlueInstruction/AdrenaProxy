@@ -1,7 +1,7 @@
-#include "adrena_core/overlay_menu.h"
-#include "adrena_core/config.h"
-#include "adrena_core/shared_state.h"
-#include "adrena_core/logger.h"
+#include "overlay_menu.h"
+#include "config.h"
+#include "shared_state.h"
+#include "logger.h"
 
 #ifdef ADRENA_OVERLAY_ENABLED
 #include <imgui.h>
@@ -9,26 +9,58 @@
 #ifdef ADRENA_DX12_OVERLAY
 #include <imgui_impl_dx12.h>
 #endif
-#include <imgui_impl_dx11.h>
-// Forward declaration for ImGui Win32 WndProc handler
+#include "Hack.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
 #include <d3d12.h>
 #include <dxgi1_4.h>
 
+// ────────────────────────────────────────────────────────
+// Palette — deep charcoal + electric orange + cool whites
+// ────────────────────────────────────────────────────────
+//
+//  BG_DEEP    #0C0D12   window background
+//  BG_MID     #13141C   child panels, nav
+//  BG_LIGHT   #1C1E2B   hover / frame
+//  ORANGE     #FF6B00   primary accent
+//  ORANGE_DIM #C45200   secondary / inactive
+//  AMBER      #FFB347   warning / highlight
+//  CYAN       #00D4FF   FG indicator
+//  GREEN      #22DD66   active / good
+//  RED        #FF3D3D   bad performance
+//  YELLOW     #FFD600   caution
+//  TEXT_HI    #E8EAF2   primary text
+//  TEXT_LO    #5A5E78   disabled / hint
+
+#define COL_BG_DEEP    ImVec4(0.047f, 0.051f, 0.071f, 1.00f)
+#define COL_BG_MID     ImVec4(0.074f, 0.078f, 0.110f, 1.00f)
+#define COL_BG_LIGHT   ImVec4(0.110f, 0.118f, 0.169f, 1.00f)
+#define COL_BG_HOVER   ImVec4(0.140f, 0.150f, 0.210f, 1.00f)
+#define COL_ORANGE     ImVec4(1.000f, 0.420f, 0.000f, 1.00f)
+#define COL_ORANGE_DIM ImVec4(0.769f, 0.322f, 0.000f, 1.00f)
+#define COL_ORANGE_A   ImVec4(1.000f, 0.420f, 0.000f, 0.18f)
+#define COL_AMBER      ImVec4(1.000f, 0.702f, 0.278f, 1.00f)
+#define COL_CYAN       ImVec4(0.000f, 0.831f, 1.000f, 1.00f)
+#define COL_GREEN      ImVec4(0.133f, 0.867f, 0.400f, 1.00f)
+#define COL_RED        ImVec4(1.000f, 0.239f, 0.239f, 1.00f)
+#define COL_YELLOW     ImVec4(1.000f, 0.839f, 0.000f, 1.00f)
+#define COL_TEXT_HI    ImVec4(0.910f, 0.918f, 0.945f, 1.00f)
+#define COL_TEXT_MID   ImVec4(0.620f, 0.635f, 0.710f, 1.00f)
+#define COL_TEXT_LO    ImVec4(0.353f, 0.369f, 0.471f, 1.00f)
+#define COL_BORDER     ImVec4(0.200f, 0.212f, 0.310f, 0.70f)
+#define COL_SEP        ImVec4(0.180f, 0.190f, 0.275f, 1.00f)
+
 namespace adrena {
 
 // ────────────────────────────────────────────────────────
-// Construction / Destruction
+// Destructor
 // ────────────────────────────────────────────────────────
 
-OverlayMenu::~OverlayMenu() {
-    Shutdown();
-}
+OverlayMenu::~OverlayMenu() { Shutdown(); }
 
 // ────────────────────────────────────────────────────────
-// Win32 Init (ImGui + input)
+// Win32 Init — context + font + theme
 // ────────────────────────────────────────────────────────
 
 bool OverlayMenu::InitWin32(HWND hwnd) {
@@ -37,79 +69,70 @@ bool OverlayMenu::InitWin32(HWND hwnd) {
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr; // Don't save imgui.ini
+    io.IniFilename  = nullptr;
+    io.LogFilename  = nullptr;
 
-    // ── Premium dark theme — Adreno blue accent ──
+    // ── Hack font 14px ──
+    ImFontConfig fontCfg;
+    fontCfg.FontDataOwnedByAtlas = false;
+    io.FontDefault = io.Fonts->AddFontFromMemoryTTF(
+        (void*)hack_font_data, (int)hack_font_size, 14.0f, &fontCfg);
+
+    // ── Style ──
     ImGui::StyleColorsDark();
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding    = 8.0f;
-    style.ChildRounding     = 6.0f;
-    style.FrameRounding     = 5.0f;
-    style.PopupRounding     = 6.0f;
-    style.GrabRounding      = 4.0f;
-    style.TabRounding       = 5.0f;
-    style.ScrollbarRounding = 8.0f;
-    style.WindowPadding     = ImVec2(14, 14);
-    style.FramePadding      = ImVec2(10, 5);
-    style.ItemSpacing       = ImVec2(10, 7);
-    style.ItemInnerSpacing  = ImVec2(8, 4);
-    style.WindowBorderSize  = 1.0f;
-    style.FrameBorderSize   = 0.0f;
-    style.TabBorderSize     = 0.0f;
-    style.GrabMinSize       = 12.0f;
-    style.ScrollbarSize     = 12.0f;
-    style.WindowTitleAlign  = ImVec2(0.5f, 0.5f);
+    ImGuiStyle& s = ImGui::GetStyle();
+    s.WindowRounding    = 10.0f;
+    s.ChildRounding     =  7.0f;
+    s.FrameRounding     =  5.0f;
+    s.PopupRounding     =  7.0f;
+    s.GrabRounding      =  4.0f;
+    s.TabRounding       =  5.0f;
+    s.ScrollbarRounding = 10.0f;
+    s.WindowPadding     = ImVec2(0, 0);   // manual padding in children
+    s.FramePadding      = ImVec2(10, 5);
+    s.ItemSpacing       = ImVec2(10, 8);
+    s.ItemInnerSpacing  = ImVec2(7, 4);
+    s.WindowBorderSize  = 1.0f;
+    s.FrameBorderSize   = 0.0f;
+    s.GrabMinSize       = 11.0f;
+    s.ScrollbarSize     = 10.0f;
 
-    ImVec4* c = style.Colors;
-    // Background
-    c[ImGuiCol_WindowBg]           = ImVec4(0.06f, 0.06f, 0.10f, 0.96f);
-    c[ImGuiCol_ChildBg]            = ImVec4(0.07f, 0.07f, 0.11f, 0.60f);
-    c[ImGuiCol_PopupBg]            = ImVec4(0.08f, 0.08f, 0.12f, 0.94f);
-    // Title bar
-    c[ImGuiCol_TitleBg]            = ImVec4(0.08f, 0.08f, 0.14f, 1.00f);
-    c[ImGuiCol_TitleBgActive]      = ImVec4(0.12f, 0.14f, 0.24f, 1.00f);
-    c[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.06f, 0.06f, 0.10f, 0.75f);
-    // Tabs — blue accent
-    c[ImGuiCol_Tab]                = ImVec4(0.10f, 0.12f, 0.20f, 0.90f);
-    c[ImGuiCol_TabHovered]         = ImVec4(0.22f, 0.35f, 0.65f, 0.85f);
-    c[ImGuiCol_TabActive]          = ImVec4(0.18f, 0.28f, 0.55f, 1.00f);
-    c[ImGuiCol_TabUnfocused]       = ImVec4(0.08f, 0.08f, 0.14f, 0.90f);
-    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.12f, 0.18f, 0.35f, 1.00f);
-    // Frame (sliders, inputs, combos)
-    c[ImGuiCol_FrameBg]            = ImVec4(0.10f, 0.10f, 0.16f, 1.00f);
-    c[ImGuiCol_FrameBgHovered]     = ImVec4(0.16f, 0.18f, 0.30f, 1.00f);
-    c[ImGuiCol_FrameBgActive]      = ImVec4(0.20f, 0.24f, 0.40f, 1.00f);
-    // Buttons
-    c[ImGuiCol_Button]             = ImVec4(0.14f, 0.18f, 0.32f, 0.80f);
-    c[ImGuiCol_ButtonHovered]      = ImVec4(0.22f, 0.30f, 0.55f, 0.90f);
-    c[ImGuiCol_ButtonActive]       = ImVec4(0.28f, 0.38f, 0.65f, 1.00f);
-    // Interactive accents — Adreno blue
-    c[ImGuiCol_CheckMark]          = ImVec4(0.35f, 0.65f, 1.00f, 1.00f);
-    c[ImGuiCol_SliderGrab]         = ImVec4(0.30f, 0.55f, 1.00f, 0.85f);
-    c[ImGuiCol_SliderGrabActive]   = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
-    // Headers (collapsing, tree nodes)
-    c[ImGuiCol_Header]             = ImVec4(0.14f, 0.18f, 0.32f, 0.55f);
-    c[ImGuiCol_HeaderHovered]      = ImVec4(0.22f, 0.30f, 0.52f, 0.70f);
-    c[ImGuiCol_HeaderActive]       = ImVec4(0.26f, 0.36f, 0.60f, 0.85f);
-    // Separator
-    c[ImGuiCol_Separator]          = ImVec4(0.20f, 0.25f, 0.45f, 0.40f);
-    c[ImGuiCol_SeparatorHovered]   = ImVec4(0.30f, 0.45f, 0.80f, 0.60f);
-    c[ImGuiCol_SeparatorActive]    = ImVec4(0.35f, 0.55f, 1.00f, 0.80f);
-    // Scrollbar
-    c[ImGuiCol_ScrollbarBg]        = ImVec4(0.05f, 0.05f, 0.08f, 0.60f);
-    c[ImGuiCol_ScrollbarGrab]      = ImVec4(0.20f, 0.25f, 0.40f, 0.80f);
-    c[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.28f, 0.35f, 0.55f, 0.90f);
-    c[ImGuiCol_ScrollbarGrabActive]= ImVec4(0.35f, 0.45f, 0.70f, 1.00f);
-    // Text
-    c[ImGuiCol_Text]               = ImVec4(0.90f, 0.92f, 0.96f, 1.00f);
-    c[ImGuiCol_TextDisabled]       = ImVec4(0.45f, 0.47f, 0.52f, 1.00f);
-    // Border
-    c[ImGuiCol_Border]             = ImVec4(0.20f, 0.25f, 0.42f, 0.40f);
-    c[ImGuiCol_BorderShadow]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    // Resize grip
-    c[ImGuiCol_ResizeGrip]         = ImVec4(0.22f, 0.35f, 0.65f, 0.25f);
-    c[ImGuiCol_ResizeGripHovered]  = ImVec4(0.30f, 0.50f, 0.90f, 0.50f);
-    c[ImGuiCol_ResizeGripActive]   = ImVec4(0.35f, 0.60f, 1.00f, 0.75f);
+    ImVec4* c = s.Colors;
+    c[ImGuiCol_WindowBg]             = COL_BG_DEEP;
+    c[ImGuiCol_ChildBg]              = COL_BG_MID;
+    c[ImGuiCol_PopupBg]              = ImVec4(0.08f, 0.08f, 0.12f, 0.97f);
+    c[ImGuiCol_TitleBg]              = COL_BG_DEEP;
+    c[ImGuiCol_TitleBgActive]        = COL_BG_DEEP;
+    c[ImGuiCol_TitleBgCollapsed]     = COL_BG_DEEP;
+    c[ImGuiCol_FrameBg]              = COL_BG_LIGHT;
+    c[ImGuiCol_FrameBgHovered]       = COL_BG_HOVER;
+    c[ImGuiCol_FrameBgActive]        = ImVec4(0.17f, 0.19f, 0.28f, 1.0f);
+    c[ImGuiCol_Button]               = ImVec4(0.14f, 0.15f, 0.22f, 1.0f);
+    c[ImGuiCol_ButtonHovered]        = ImVec4(0.22f, 0.24f, 0.34f, 1.0f);
+    c[ImGuiCol_ButtonActive]         = COL_ORANGE_DIM;
+    c[ImGuiCol_CheckMark]            = COL_ORANGE;
+    c[ImGuiCol_SliderGrab]           = COL_ORANGE;
+    c[ImGuiCol_SliderGrabActive]     = COL_AMBER;
+    c[ImGuiCol_Header]               = COL_ORANGE_A;
+    c[ImGuiCol_HeaderHovered]        = ImVec4(1.0f, 0.42f, 0.0f, 0.28f);
+    c[ImGuiCol_HeaderActive]         = ImVec4(1.0f, 0.42f, 0.0f, 0.40f);
+    c[ImGuiCol_Separator]            = COL_SEP;
+    c[ImGuiCol_SeparatorHovered]     = COL_ORANGE_DIM;
+    c[ImGuiCol_SeparatorActive]      = COL_ORANGE;
+    c[ImGuiCol_Tab]                  = COL_BG_MID;
+    c[ImGuiCol_TabHovered]           = COL_BG_HOVER;
+    c[ImGuiCol_TabActive]            = COL_BG_LIGHT;
+    c[ImGuiCol_ScrollbarBg]          = ImVec4(0.04f, 0.04f, 0.06f, 0.6f);
+    c[ImGuiCol_ScrollbarGrab]        = ImVec4(0.22f, 0.24f, 0.35f, 0.9f);
+    c[ImGuiCol_ScrollbarGrabHovered] = ImVec4(0.32f, 0.35f, 0.50f, 1.0f);
+    c[ImGuiCol_ScrollbarGrabActive]  = COL_ORANGE_DIM;
+    c[ImGuiCol_Text]                 = COL_TEXT_HI;
+    c[ImGuiCol_TextDisabled]         = COL_TEXT_LO;
+    c[ImGuiCol_Border]               = COL_BORDER;
+    c[ImGuiCol_BorderShadow]         = ImVec4(0, 0, 0, 0);
+    c[ImGuiCol_ResizeGrip]           = ImVec4(1.0f, 0.42f, 0.0f, 0.15f);
+    c[ImGuiCol_ResizeGripHovered]    = ImVec4(1.0f, 0.42f, 0.0f, 0.40f);
+    c[ImGuiCol_ResizeGripActive]     = COL_ORANGE;
 
     ImGui_ImplWin32_Init(hwnd);
     AD_LOG_I("Overlay Win32 initialized");
@@ -120,71 +143,40 @@ bool OverlayMenu::InitWin32(HWND hwnd) {
 }
 
 // ────────────────────────────────────────────────────────
-// DX12 Init (rendering backend)
+// DX12 Init
 // ────────────────────────────────────────────────────────
 
 bool OverlayMenu::InitDX12(ID3D12Device* device, DXGI_FORMAT rtvFormat) {
 #ifdef ADRENA_DX12_OVERLAY
     if (m_initialized) return true;
     if (!device) return false;
-
     m_device = device;
 
-    // RTV heap — one descriptor per backbuffer (we recreate per frame)
     D3D12_DESCRIPTOR_HEAP_DESC rtvDesc{};
     rtvDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
     rtvDesc.NumDescriptors = 1;
-    rtvDesc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-    HRESULT hr = device->CreateDescriptorHeap(&rtvDesc,
-        IID_ID3D12DescriptorHeap, (void**)&m_rtvHeap);
-    if (FAILED(hr)) {
-        AD_LOG_E("Overlay: Failed to create RTV heap");
-        return false;
-    }
+    HRESULT hr = device->CreateDescriptorHeap(&rtvDesc, IID_ID3D12DescriptorHeap, (void**)&m_rtvHeap);
+    if (FAILED(hr)) { AD_LOG_E("Overlay: RTV heap failed"); return false; }
 
-    // SRV heap for ImGui font atlas
     D3D12_DESCRIPTOR_HEAP_DESC srvDesc{};
     srvDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
     srvDesc.NumDescriptors = 1;
     srvDesc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-    hr = device->CreateDescriptorHeap(&srvDesc,
-        IID_ID3D12DescriptorHeap, (void**)&m_srvHeap);
-    if (FAILED(hr)) {
-        AD_LOG_E("Overlay: Failed to create SRV heap");
-        return false;
-    }
+    hr = device->CreateDescriptorHeap(&srvDesc, IID_ID3D12DescriptorHeap, (void**)&m_srvHeap);
+    if (FAILED(hr)) { AD_LOG_E("Overlay: SRV heap failed"); return false; }
 
-    // Command allocator
-    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-        IID_ID3D12CommandAllocator, (void**)&m_cmdAlloc);
-    if (FAILED(hr)) {
-        AD_LOG_E("Overlay: Failed to create command allocator");
-        return false;
-    }
+    hr = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_ID3D12CommandAllocator, (void**)&m_cmdAlloc);
+    if (FAILED(hr)) { AD_LOG_E("Overlay: CmdAlloc failed"); return false; }
 
-    // Command list
-    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-        m_cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&m_cmdList);
-    if (FAILED(hr)) {
-        AD_LOG_E("Overlay: Failed to create command list");
-        return false;
-    }
+    hr = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_cmdAlloc, nullptr, IID_ID3D12GraphicsCommandList, (void**)&m_cmdList);
+    if (FAILED(hr)) { AD_LOG_E("Overlay: CmdList failed"); return false; }
     m_cmdList->Close();
 
-    // Fence for GPU synchronization (non-blocking)
-    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
-        IID_ID3D12Fence, (void**)&m_fence);
-    if (FAILED(hr)) {
-        AD_LOG_E("Overlay: Failed to create fence");
-        return false;
-    }
+    hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_ID3D12Fence, (void**)&m_fence);
+    if (FAILED(hr)) { AD_LOG_E("Overlay: Fence failed"); return false; }
     m_fenceEvent = CreateEventA(nullptr, FALSE, FALSE, nullptr);
-    if (!m_fenceEvent) {
-        AD_LOG_E("Overlay: Failed to create fence event");
-        return false;
-    }
+    if (!m_fenceEvent) { AD_LOG_E("Overlay: FenceEvent failed"); return false; }
 
-    // Initialize ImGui DX12 backend
     ImGui_ImplDX12_Init(device, 1, rtvFormat, m_srvHeap,
         m_srvHeap->GetCPUDescriptorHandleForHeapStart(),
         m_srvHeap->GetGPUDescriptorHandleForHeapStart());
@@ -193,7 +185,6 @@ bool OverlayMenu::InitDX12(ID3D12Device* device, DXGI_FORMAT rtvFormat) {
     AD_LOG_I("Overlay DX12 backend initialized");
     return true;
 #else
-    AD_LOG_W("DX12 overlay not available (build without MSVC)");
     return false;
 #endif
 }
@@ -205,28 +196,24 @@ bool OverlayMenu::InitDX12(ID3D12Device* device, DXGI_FORMAT rtvFormat) {
 void OverlayMenu::Shutdown() {
 #ifdef ADRENA_OVERLAY_ENABLED
     if (!m_initialized) return;
-
 #ifdef ADRENA_DX12_OVERLAY
     ImGui_ImplDX12_Shutdown();
 #endif
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
-
-    if (m_cmdList)    { m_cmdList->Release();    m_cmdList = nullptr; }
-    if (m_cmdAlloc)   { m_cmdAlloc->Release();   m_cmdAlloc = nullptr; }
-    if (m_fence)      { m_fence->Release();      m_fence = nullptr; }
-    if (m_rtvHeap)    { m_rtvHeap->Release();    m_rtvHeap = nullptr; }
-    if (m_srvHeap)    { m_srvHeap->Release();    m_srvHeap = nullptr; }
+    if (m_cmdList)    { m_cmdList->Release();      m_cmdList    = nullptr; }
+    if (m_cmdAlloc)   { m_cmdAlloc->Release();     m_cmdAlloc   = nullptr; }
+    if (m_fence)      { m_fence->Release();        m_fence      = nullptr; }
+    if (m_rtvHeap)    { m_rtvHeap->Release();      m_rtvHeap    = nullptr; }
+    if (m_srvHeap)    { m_srvHeap->Release();      m_srvHeap    = nullptr; }
     if (m_fenceEvent) { CloseHandle(m_fenceEvent); m_fenceEvent = nullptr; }
-
-    m_device      = nullptr;
-    m_initialized = false;
+    m_device = nullptr; m_initialized = false;
     AD_LOG_I("Overlay shut down");
 #endif
 }
 
 // ────────────────────────────────────────────────────────
-// Render — called once per frame from ProxySwapChain::PresentImpl
+// Render
 // ────────────────────────────────────────────────────────
 
 void OverlayMenu::Render(ID3D12CommandQueue* cmdQueue,
@@ -234,31 +221,21 @@ void OverlayMenu::Render(ID3D12CommandQueue* cmdQueue,
                          uint32_t width, uint32_t height) {
 #ifdef ADRENA_DX12_OVERLAY
     if (!m_initialized || !backbuffer || !cmdQueue) return;
-
-    // ── Wait for previous overlay frame to finish on GPU ──
     if (m_fence && m_fenceVal > 0 && m_fence->GetCompletedValue() < m_fenceVal) {
         m_fence->SetEventOnCompletion(m_fenceVal, m_fenceEvent);
         WaitForSingleObject(m_fenceEvent, INFINITE);
     }
-
-    // ── Begin ImGui frame ──
     ImGui_ImplDX12_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
 
-    // Build UI if visible
     if (m_visible) BuildUI();
-
-    // Always render HUD (FPS counter etc.)
-    RenderHUD(width, height);
+    RenderHUD((int)width, (int)height);
 
     ImGui::Render();
-
-    // ── Use overlay's own command list ──
     m_cmdAlloc->Reset();
     m_cmdList->Reset(m_cmdAlloc, nullptr);
 
-    // Transition backbuffer: PRESENT → RENDER_TARGET
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource   = backbuffer;
@@ -267,381 +244,454 @@ void OverlayMenu::Render(ID3D12CommandQueue* cmdQueue,
     barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
     m_cmdList->ResourceBarrier(1, &barrier);
 
-    // Create RTV for this backbuffer
     D3D12_RENDER_TARGET_VIEW_DESC rtvDesc{};
-    rtvDesc.Format         = DXGI_FORMAT_R8G8B8A8_UNORM;
-    rtvDesc.ViewDimension  = D3D12_RTV_DIMENSION_TEXTURE2D;
+    rtvDesc.Format        = DXGI_FORMAT_R8G8B8A8_UNORM;
+    rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
     m_device->CreateRenderTargetView(backbuffer, &rtvDesc,
         m_rtvHeap->GetCPUDescriptorHandleForHeapStart());
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle =
-        m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
-    m_cmdList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
-
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvH = m_rtvHeap->GetCPUDescriptorHandleForHeapStart();
+    m_cmdList->OMSetRenderTargets(1, &rtvH, FALSE, nullptr);
     ID3D12DescriptorHeap* heaps[] = { m_srvHeap };
     m_cmdList->SetDescriptorHeaps(1, heaps);
-
     ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), m_cmdList);
 
-    // Transition backbuffer: RENDER_TARGET → PRESENT
     barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
     barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
     m_cmdList->ResourceBarrier(1, &barrier);
-
     m_cmdList->Close();
-
-    // ── Submit overlay command list to GPU ──
     ID3D12CommandList* lists[] = { m_cmdList };
     cmdQueue->ExecuteCommandLists(1, lists);
-
-    // ── Signal fence so next frame waits for completion ──
     m_fenceVal++;
     cmdQueue->Signal(m_fence, m_fenceVal);
-
 #endif
 }
 
 // ────────────────────────────────────────────────────────
-// Get the overlay's command list for submission
-// (used by ProxySwapChain to submit overlay work)
+// Helper: draw a colored pill badge (inline label)
 // ────────────────────────────────────────────────────────
 
-// This is accessed via friend or public member — ProxySwapChain reads m_cmdList
+void OverlayMenu::DrawStatusBadge(const char* text, ImVec4 color) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    ImVec2 pos  = ImGui::GetCursorScreenPos();
+    ImVec2 size = ImGui::CalcTextSize(text);
+    float  pad  = 6.0f;
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec4 bg = ImVec4(color.x * 0.25f, color.y * 0.25f, color.z * 0.25f, 0.90f);
+    dl->AddRectFilled(
+        ImVec2(pos.x - pad, pos.y - 2),
+        ImVec2(pos.x + size.x + pad, pos.y + size.y + 2),
+        ImGui::ColorConvertFloat4ToU32(bg), 4.0f);
+    dl->AddRect(
+        ImVec2(pos.x - pad, pos.y - 2),
+        ImVec2(pos.x + size.x + pad, pos.y + size.y + 2),
+        ImGui::ColorConvertFloat4ToU32(ImVec4(color.x, color.y, color.z, 0.50f)), 4.0f);
+    ImGui::TextColored(color, "%s", text);
+    ImGui::SetCursorScreenPos(ImVec2(pos.x + size.x + pad * 2 + 2, pos.y));
+    ImGui::SameLine(0, 0);
+    ImGui::Dummy(ImVec2(0, size.y)); // advance cursor properly
+    ImGui::SameLine();
+#endif
+}
 
 // ────────────────────────────────────────────────────────
-// Build UI — main menu window
+// Helper: sidebar nav item
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::DrawNavItem(const char* icon, const char* label, int index) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    bool selected = (m_navPage == index);
+    float w = ImGui::GetContentRegionAvail().x;
+
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    // active left-bar indicator
+    if (selected) {
+        dl->AddRectFilled(
+            ImVec2(pos.x, pos.y + 4),
+            ImVec2(pos.x + 3, pos.y + 32),
+            ImGui::ColorConvertFloat4ToU32(COL_ORANGE), 2.0f);
+    }
+
+    ImVec4 bgCol = selected ? COL_BG_LIGHT : ImVec4(0, 0, 0, 0);
+    ImGui::PushStyleColor(ImGuiCol_Button, bgCol);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_BG_HOVER);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  COL_BG_LIGHT);
+    ImGui::PushStyleColor(ImGuiCol_Text, selected ? COL_ORANGE : COL_TEXT_MID);
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.08f, 0.5f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+
+    char buf[64];
+    snprintf(buf, sizeof(buf), "  %s  %s##nav%d", icon, label, index);
+    if (ImGui::Button(buf, ImVec2(w, 36)))
+        m_navPage = index;
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(4);
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// Page helpers
+// ────────────────────────────────────────────────────────
+
+static void SectionHeader(const char* title) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
+    ImGui::Text("%s", title);
+    ImGui::PopStyleColor();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    ImVec2 p = ImGui::GetCursorScreenPos();
+    float w  = ImGui::GetContentRegionAvail().x;
+    dl->AddLine(ImVec2(p.x, p.y), ImVec2(p.x + w, p.y),
+        ImGui::ColorConvertFloat4ToU32(COL_SEP));
+    ImGui::Dummy(ImVec2(0, 4));
+#endif
+}
+
+static void SmallLabel(const char* text) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
+    ImGui::TextUnformatted(text);
+    ImGui::PopStyleColor();
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// Page: SGSR
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::DrawPageSGSR() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg     = GetConfig();
+    SharedState* ss = GetSharedState();
+
+    ImGui::Dummy(ImVec2(0, 2));
+
+    // ── Mode ──
+    SectionHeader("UPSCALING MODE");
+
+    const char* modes[] = { "Off", "SGSR1 — Spatial", "SGSR2 — Temporal" };
+    int mode = cfg.enabled ? (int)cfg.sgsr_mode : 0;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##mode", &mode, modes, 3)) {
+        cfg.enabled   = (mode != 0);
+        cfg.sgsr_mode = (mode == 0) ? SGSRMode::Off : (SGSRMode)mode;
+        if (ss) { SharedStateLock l(&ss->lock); ss->sgsr_enabled = cfg.enabled; }
+    }
+
+    if (cfg.sgsr_mode == SGSRMode::SGSR2) {
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_AMBER);
+        ImGui::TextWrapped("! SGSR2 requires depth + motion vectors (DLSS games only)");
+        ImGui::PopStyleColor();
+    }
+
+    // ── Resolution ──
+    SectionHeader("RENDER RESOLUTION");
+
+    const char* presets[] = {
+        "Native  100%%", "Ultra Quality  77%%", "Quality  67%%",
+        "Balanced  59%%", "Performance  50%%", "Ultra Perf  33%%", "Custom..."
+    };
+    const float pscales[] = { 1.0f, 0.77f, 0.67f, 0.59f, 0.50f, 0.33f, 0.0f };
+    static int presetIdx = 6;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##res", &presetIdx, presets, 7)) {
+        if (presetIdx < 6) { cfg.custom_scale = pscales[presetIdx]; cfg.ApplyRenderScale(); }
+        if (ss && presetIdx < 6) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+    }
+
+    float scale = cfg.GetRenderScale();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##scale", &scale, 0.25f, 1.0f, "Scale  %.0f%%")) {
+        cfg.custom_scale = scale; cfg.ApplyRenderScale(); presetIdx = 6;
+        if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+    }
+
+    // ── Sharpness ──
+    SectionHeader("SHARPNESS");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderFloat("##sharp", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {
+        if (ss) { SharedStateLock l(&ss->lock); ss->sharpness = cfg.sharpness; }
+    }
+    SmallLabel("0.0 = none   0.8 = default   2.0 = maximum");
+
+    // ── Status card ──
+    SectionHeader("STATUS");
+    if (ss) {
+        SharedStateLock l(&ss->lock);
+        if (ss->sgsr_active) {
+            ImGui::TextColored(COL_GREEN, "DLSS Path — %ux%u  →  %ux%u  (%.0f%%)",
+                ss->render_width, ss->render_height,
+                ss->display_width, ss->display_height,
+                ss->render_scale * 100.0f);
+        } else if (cfg.enabled) {
+            ImGui::TextColored(COL_AMBER, "DXGI Sharpening  (%.0f%%)", cfg.render_scale * 100.0f);
+        } else {
+            ImGui::TextColored(COL_TEXT_LO, "Disabled");
+        }
+    }
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// Page: Frame Generation
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::DrawPageFrameGen() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg     = GetConfig();
+    SharedState* ss = GetSharedState();
+
+    ImGui::Dummy(ImVec2(0, 2));
+    SectionHeader("MULTIPLIER");
+
+    const char* fgModes[] = { "Off (x1)", "x2  — +1 frame", "x3  — +2 frames", "x4  — +3 frames" };
+    int fg = (int)cfg.fg_mode;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("##fg", &fg, fgModes, 4)) {
+        cfg.fg_mode = (FGMode)fg;
+        if (ss) { SharedStateLock l(&ss->lock); ss->fg_mode = (int32_t)cfg.fg_mode + 1; }
+    }
+
+    SectionHeader("FPS THRESHOLD");
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::SliderInt("##thr", &cfg.fps_threshold, 0, 240)) {}
+    SmallLabel(cfg.fps_threshold == 0 ? "Auto-disable: Off (always active)" :
+               "Auto-disable above threshold FPS");
+
+    SectionHeader("ABOUT");
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_MID);
+    ImGui::TextWrapped(
+        "Pure Extra Present — inserts empty Present() calls to "
+        "stimulate the Vulkan pipeline on Turnip/Adreno. "
+        "Zero GPU compute. No backbuffer index shift, "
+        "so overlay rendering never flickers.");
+    ImGui::PopStyleColor();
+
+    if (ss) {
+        SharedStateLock l(&ss->lock);
+        SectionHeader("ACTIVE");
+        ImGui::TextColored(ss->fg_mode > 1 ? COL_CYAN : COL_TEXT_LO,
+            "x%d  (%d interpolated frames per real frame)",
+            ss->fg_mode, ss->fg_mode - 1);
+    }
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// Page: Display
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::DrawPageDisplay() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg     = GetConfig();
+    SharedState* ss = GetSharedState();
+
+    ImGui::Dummy(ImVec2(0, 2));
+    SectionHeader("HUD");
+
+    if (ImGui::Checkbox("Show Performance HUD", &cfg.fps_display))
+        if (ss) { SharedStateLock l(&ss->lock); ss->fps_display = cfg.fps_display; }
+
+    if (ImGui::Checkbox("Show Banner on Startup", &cfg.overlay_enabled))
+        if (ss) { SharedStateLock l(&ss->lock); ss->overlay_visible = cfg.overlay_enabled; }
+
+    SectionHeader("APPEARANCE");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##opacity", &cfg.overlay_opacity, 0.3f, 1.0f, "Menu Opacity  %.2f");
+
+    SectionHeader("KEY BINDINGS");
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_MID);
+    ImGui::BulletText("HOME               Toggle menu");
+    ImGui::BulletText("All changes        Apply instantly");
+    ImGui::PopStyleColor();
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// Page: Advanced
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::DrawPageAdvanced() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg     = GetConfig();
+    SharedState* ss = GetSharedState();
+
+    ImGui::Dummy(ImVec2(0, 2));
+    SectionHeader("GPU");
+    if (ss) {
+        SharedStateLock l(&ss->lock);
+        ImGui::TextColored(COL_TEXT_HI, "%s", ss->is_adreno ? "Qualcomm Adreno" : "Unknown");
+        if (ss->is_adreno && ss->adreno_tier > 0)
+            ImGui::TextColored(COL_TEXT_MID, "Tier  %dxx", ss->adreno_tier);
+        ImGui::TextColored(COL_TEXT_MID, "DLSS Proxy  %s",
+            ss->sgsr_active ? "Active" : "Inactive");
+    }
+    {
+        MEMORYSTATUSEX m = {}; m.dwLength = sizeof(m);
+        if (GlobalMemoryStatusEx(&m)) {
+            DWORDLONG used  = (m.ullTotalPhys - m.ullAvailPhys) / (1024*1024);
+            DWORDLONG total = m.ullTotalPhys / (1024*1024);
+            ImGui::TextColored(COL_TEXT_MID, "RAM  %llu / %llu MB  (%lu%%)", used, total, m.dwMemoryLoad);
+        }
+    }
+
+    SectionHeader("RENDERING");
+    const char* vsyncOpts[] = { "Off", "On", "Adaptive" };
+    int vsIdx = (cfg.vsync < 0 || cfg.vsync > 2) ? 0 : cfg.vsync;
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::Combo("VSync##adv", &vsIdx, vsyncOpts, 3)) cfg.vsync = vsIdx;
+
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("Frame Queue##adv", &cfg.max_frame_queue, 1, 5);
+    SmallLabel("Lower = less input lag   Higher = smoother");
+
+    SectionHeader("ACTIONS");
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(1.0f, 0.42f, 0.0f, 0.20f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.42f, 0.0f, 0.35f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(1.0f, 0.42f, 0.0f, 0.55f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          COL_ORANGE);
+    if (ImGui::Button("Save Config  →  INI", ImVec2(-1, 30))) {
+        cfg.Save(GetConfigPath());
+        AD_LOG_I("Config saved to INI");
+    }
+    ImGui::PopStyleColor(4);
+
+    ImGui::Spacing();
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.14f, 0.15f, 0.22f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COL_BG_HOVER);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.20f, 0.22f, 0.32f, 1.0f));
+    if (ImGui::Button("Reset All to Defaults", ImVec2(-1, 30))) {
+        cfg = Config(); cfg.ApplyRenderScale();
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            ss->fg_mode = 1; ss->overlay_visible = true; ss->fps_display = true;
+            ss->sharpness = cfg.sharpness; ss->render_scale = cfg.render_scale;
+            ss->sgsr_enabled = false;
+        }
+        AD_LOG_I("Config reset to defaults");
+    }
+    ImGui::PopStyleColor(3);
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// BuildUI — left sidebar + content panel
 // ────────────────────────────────────────────────────────
 
 void OverlayMenu::BuildUI() {
 #ifdef ADRENA_OVERLAY_ENABLED
-    Config& cfg = GetConfig();
-    SharedState* ss = GetSharedState();
+    const float WIN_W = 500.0f;
+    const float WIN_H = 360.0f;
+    const float NAV_W = 122.0f;
 
-    ImGui::SetNextWindowSize(ImVec2(440, 380), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.96f);
+    ImGui::SetNextWindowSize(ImVec2(WIN_W, WIN_H), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(1.0f);
 
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.25f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.50f, 1.00f, 0.30f));
 
-    if (!ImGui::Begin("AdrenaProxy v2.0##Main", &m_visible,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
-        ImGui::End();
+    ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+                          ImGuiWindowFlags_NoCollapse;
+    if (!ImGui::Begin("##AdrenaMain", &m_visible, wf)) {
+        ImGui::End(); ImGui::PopStyleColor(); ImGui::PopStyleVar(); return;
+    }
+
+    // ── Top header bar ──
+    {
+        ImDrawList* dl  = ImGui::GetWindowDrawList();
+        ImVec2 wpos     = ImGui::GetWindowPos();
+        ImVec2 wsize    = ImGui::GetWindowSize();
+        // thin orange top line
+        dl->AddRectFilled(
+            ImVec2(wpos.x, wpos.y),
+            ImVec2(wpos.x + wsize.x, wpos.y + 2),
+            ImGui::ColorConvertFloat4ToU32(COL_ORANGE));
+
+        ImGui::SetCursorPos(ImVec2(14, 10));
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_ORANGE);
+        ImGui::Text("ADRENA");
         ImGui::PopStyleColor();
-        ImGui::PopStyleVar();
-        return;
+        ImGui::SameLine(0, 0);
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_HI);
+        ImGui::Text("PROXY");
+        ImGui::PopStyleColor();
+        ImGui::SameLine(0, 8);
+        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
+        ImGui::Text("v2.0");
+        ImGui::PopStyleColor();
+
+        // right-align GPU tier badge
+        SharedState* ss = GetSharedState();
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->is_adreno && ss->adreno_tier > 0) {
+                char badge[32];
+                snprintf(badge, sizeof(badge), "Adreno %dxx", ss->adreno_tier);
+                float bw = ImGui::CalcTextSize(badge).x + 16;
+                ImGui::SameLine(wsize.x - bw - 14);
+                ImGui::TextColored(COL_GREEN, "%s", badge);
+            }
+        }
+        ImGui::SetCursorPosY(34);
+        dl->AddLine(
+            ImVec2(wpos.x, wpos.y + 34),
+            ImVec2(wpos.x + wsize.x, wpos.y + 34),
+            ImGui::ColorConvertFloat4ToU32(COL_SEP));
     }
 
-    // ── Header bar ──
-    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "AdrenaProxy");
-    ImGui::SameLine();
-    ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1.0f), "v2.0");
+    // ── Left nav panel ──
+    ImGui::SetCursorPos(ImVec2(0, 36));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_MID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 6));
+    ImGui::BeginChild("##nav", ImVec2(NAV_W, WIN_H - 36), false, ImGuiWindowFlags_NoScrollbar);
 
-    if (ss) {
-        SharedStateLock l(&ss->lock);
-        if (ss->is_adreno) {
-            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
-            ImGui::TextColored(ImVec4(0.20f, 1.00f, 0.40f, 1.0f), "Adreno Tier %d", ss->adreno_tier);
-        }
+    DrawNavItem("~", "SGSR",      0);
+    DrawNavItem(">>","FRAME GEN", 1);
+    DrawNavItem("[]","DISPLAY",   2);
+    DrawNavItem("/\\","ADVANCED", 3);
+
+    // Version footer inside nav
+    float navH = ImGui::GetWindowHeight();
+    ImGui::SetCursorPosY(navH - 22);
+    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
+    ImGui::SetCursorPosX(8);
+    ImGui::Text("BlueInstruction");
+    ImGui::PopStyleColor();
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
+
+    // ── Vertical divider ──
+    {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImVec2 wp      = ImGui::GetWindowPos();
+        dl->AddLine(
+            ImVec2(wp.x + NAV_W, wp.y + 36),
+            ImVec2(wp.x + NAV_W, wp.y + WIN_H),
+            ImGui::ColorConvertFloat4ToU32(COL_SEP));
     }
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    // ── Content panel ──
+    ImGui::SetCursorPos(ImVec2(NAV_W + 1, 36));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_DEEP);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
+    ImGui::BeginChild("##content", ImVec2(WIN_W - NAV_W - 1, WIN_H - 36), false);
 
-    // ── Tab bar ──
-    if (ImGui::BeginTabBar("##Tabs", ImGuiTabBarFlags_None)) {
-
-        // ═══════════════════════════════════════════
-        // Tab: SGSR
-        // ═══════════════════════════════════════════
-        if (ImGui::BeginTabItem("SGSR")) {
-
-            // ── SGSR Mode — Off automatically disables, selecting mode enables ──
-            const char* modes[] = { "Off", "SGSR1 (Spatial)", "SGSR2 (Temporal)" };
-            int mode = cfg.enabled ? (int)cfg.sgsr_mode : 0;
-            if (ImGui::Combo("SGSR Mode", &mode, modes, 3)) {
-                if (mode == 0) {
-                    cfg.enabled = false;
-                    cfg.sgsr_mode = SGSRMode::Off;
-                } else {
-                    cfg.enabled = true;
-                    cfg.sgsr_mode = (SGSRMode)mode;
-                }
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->sgsr_enabled = cfg.enabled;
-                }
-            }
-
-            // SGSR2 experimental warning
-            if (cfg.sgsr_mode == SGSRMode::SGSR2) {
-                ImGui::Spacing();
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
-                ImGui::TextWrapped("SGSR2 experimental — needs depth + motion vectors (DLSS games only)");
-                ImGui::PopStyleColor();
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Resolution Presets ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Resolution Preset");
-            const char* resPresets[] = {
-                "Native (100%%)",
-                "1440x810 (75%%)",
-                "1280x720 (67%%)",
-                "1152x648 (60%%)",
-                "1024x576 (53%%)",
-                "960x540 (50%%)",
-                "800x450 (42%%)",
-                "640x360 (33%%)",
-                "Custom..."
-            };
-            static int resIdx = 8;
-            if (ImGui::Combo("Resolution", &resIdx, resPresets, 9)) {
-                const float scales[] = { 1.0f, 0.75f, 0.67f, 0.60f, 0.53f, 0.50f, 0.42f, 0.33f, 0.0f };
-                if (resIdx < 8) {
-                    cfg.custom_scale = scales[resIdx];
-                    cfg.ApplyRenderScale();
-                    if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
-                }
-            }
-
-            // ── Quality Preset ──
-            const char* qualities[] = {
-                "Ultra Quality (77%)",
-                "Quality (67%)",
-                "Balanced (59%)",
-                "Performance (50%)",
-                "Ultra Performance (33%)"
-            };
-            int q = (int)cfg.quality;
-            if (ImGui::Combo("Quality", &q, qualities, 5)) {
-                cfg.quality = (Quality)q;
-                cfg.custom_scale = 0.0f;
-                cfg.ApplyRenderScale();
-                resIdx = 8;
-                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
-            }
-
-            // ── Custom Render Scale ──
-            float scale = cfg.GetRenderScale();
-            if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) {
-                cfg.custom_scale = scale;
-                cfg.ApplyRenderScale();
-                resIdx = 8;
-                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Visual Quality ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Visual Quality");
-
-            if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {
-                if (ss) { SharedStateLock l(&ss->lock); ss->sharpness = cfg.sharpness; }
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = no sharpening, 0.8 = default, 2.0 = maximum");
-
-            ImGui::Spacing();
-
-            // ── Status ──
-            if (ss) {
-                SharedStateLock l(&ss->lock);
-                ImGui::Separator();
-                ImGui::Spacing();
-                if (ss->sgsr_active) {
-                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f),
-                        "Active: DLSS Proxy — %ux%u > %ux%u",
-                        ss->render_width, ss->render_height,
-                        ss->display_width, ss->display_height);
-                } else if (cfg.enabled) {
-                    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.2f, 1.0f),
-                        "Active: DXGI Sharpening (scale %.0f%%)", cfg.render_scale * 100.0f);
-                } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "SGSR: Disabled");
-                }
-            }
-
-            ImGui::EndTabItem();
-        }
-
-        // ═══════════════════════════════════════════
-        // Tab: Frame Generation
-        // ═══════════════════════════════════════════
-        if (ImGui::BeginTabItem("Frame Gen")) {
-
-            const char* fgModes[] = { "Off (x1)", "x2", "x3", "x4" };
-            int fg = (int)cfg.fg_mode;
-            if (ImGui::Combo("Mode", &fg, fgModes, 4)) {
-                cfg.fg_mode = (FGMode)fg;
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->fg_mode = (int32_t)cfg.fg_mode + 1;
-                }
-            }
-
-            ImGui::Spacing();
-
-            // FG explanation
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.8f, 0.9f, 1.0f));
-            ImGui::TextWrapped("Pure Extra Present mode — adds empty Present() calls");
-            ImGui::TextWrapped("to stimulate the Vulkan queue on Turnip/Adreno.");
-            ImGui::TextWrapped("Zero GPU compute overhead. No backbuffer index change");
-            ImGui::TextWrapped("(fixes overlay flickering).");
-            ImGui::PopStyleColor();
-
-            ImGui::Spacing();
-
-            // FPS threshold
-            if (ImGui::SliderInt("FPS Threshold", &cfg.fps_threshold, 0, 120)) {
-                // 0 = always active, else auto-disable above threshold
-            }
-            if (cfg.fps_threshold > 0) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(auto-disable above %d FPS)", cfg.fps_threshold);
-            } else {
-                ImGui::SameLine();
-                ImGui::TextDisabled("(always active)");
-            }
-
-            // Current FG status
-            if (ss) {
-                SharedStateLock l(&ss->lock);
-                int curFg = ss->fg_mode;
-                ImGui::Spacing();
-                ImGui::Text("Active FG: x%d (%d extra presents/frame)",
-                    curFg, curFg - 1);
-            }
-
-            ImGui::EndTabItem();
-        }
-
-        // ═══════════════════════════════════════════
-        // Tab: Display
-        // ═══════════════════════════════════════════
-        if (ImGui::BeginTabItem("Display")) {
-
-            // ── HUD Settings ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "HUD");
-
-            ImGui::Checkbox("Show FPS Counter", &cfg.fps_display);
-            if (ss) { SharedStateLock l(&ss->lock); ss->fps_display = cfg.fps_display; }
-
-            ImGui::Checkbox("Show Overlay on Startup", &cfg.overlay_enabled);
-            if (ss) { SharedStateLock l(&ss->lock); ss->overlay_visible = cfg.overlay_enabled; }
-
-            // HUD Layout toggle
-            static bool hudHorizontal = false;
-            const char* hudLayouts[] = { "Vertical (Detailed)", "Horizontal (Compact)" };
-            int hudIdx = hudHorizontal ? 1 : 0;
-            if (ImGui::Combo("HUD Layout", &hudIdx, hudLayouts, 2))
-                hudHorizontal = (hudIdx == 1);
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.55f, 1.0f), "Tip: Double-click HUD to toggle layout");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Appearance ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Appearance");
-            ImGui::SliderFloat("Overlay Opacity", &cfg.overlay_opacity, 0.3f, 1.0f, "%.2f");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Key Bindings ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Key Bindings");
-            ImGui::BulletText("HOME — Toggle this menu");
-            ImGui::BulletText("Double-click HUD — Toggle layout");
-            ImGui::BulletText("Changes apply instantly");
-
-            ImGui::EndTabItem();
-        }
-
-        // ═══════════════════════════════════════════
-        // Tab: Advanced
-        // ═══════════════════════════════════════════
-        if (ImGui::BeginTabItem("Advanced")) {
-
-            // ── GPU Info ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "GPU Information");
-            if (ss) {
-                SharedStateLock l(&ss->lock);
-                ImGui::Text("GPU: %s", ss->is_adreno ? "Qualcomm Adreno" : "Other");
-                if (ss->is_adreno && ss->adreno_tier > 0)
-                    ImGui::Text("Tier: Adreno %dxx", ss->adreno_tier);
-                ImGui::Text("DLSS Proxy: %s", ss->sgsr_active ? "Active" : "Inactive");
-            }
-            // RAM info
-            {
-                MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
-                if (GlobalMemoryStatusEx(&memInfo)) {
-                    DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024*1024);
-                    DWORDLONG totalMB = memInfo.ullTotalPhys / (1024*1024);
-                    ImGui::Text("RAM: %llu / %llu MB (%lu%%)", usedMB, totalMB, memInfo.dwMemoryLoad);
-                }
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Rendering Options ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Rendering");
-
-            const char* vsyncModes[] = { "Off", "On", "Adaptive" };
-            int vsIdx = cfg.vsync;
-            if (vsIdx < 0 || vsIdx > 2) vsIdx = 0;
-            if (ImGui::Combo("VSync", &vsIdx, vsyncModes, 3))
-                cfg.vsync = vsIdx;
-
-            ImGui::SliderInt("Frame Queue Depth", &cfg.max_frame_queue, 1, 5);
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lower = less input lag, Higher = smoother");
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-
-            // ── Actions ──
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Actions");
-
-            if (ImGui::Button("Save Config to INI", ImVec2(-1, 0))) {
-                cfg.Save(GetConfigPath());
-                AD_LOG_I("Config saved to INI");
-            }
-
-            ImGui::Spacing();
-
-            if (ImGui::Button("Reset All to Defaults", ImVec2(-1, 0))) {
-                cfg = Config();
-                cfg.ApplyRenderScale();
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->fg_mode         = 1;
-                    ss->overlay_visible = true;
-                    ss->fps_display     = true;
-                    ss->sharpness       = cfg.sharpness;
-                    ss->render_scale    = cfg.render_scale;
-                    ss->sgsr_enabled    = false;
-                }
-                AD_LOG_I("Config reset to defaults");
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "AdrenaProxy v2.0");
-
-            ImGui::EndTabItem();
-        }
-
-        ImGui::EndTabBar();
+    switch (m_navPage) {
+        case 0: DrawPageSGSR();     break;
+        case 1: DrawPageFrameGen(); break;
+        case 2: DrawPageDisplay();  break;
+        case 3: DrawPageAdvanced(); break;
     }
+
+    ImGui::EndChild();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor();
 
     ImGui::End();
     ImGui::PopStyleColor();
@@ -650,174 +700,279 @@ void OverlayMenu::BuildUI() {
 }
 
 // ────────────────────────────────────────────────────────
-// Render HUD — FPS counter and status overlay
+// RenderHUD — MangoHud-style horizontal bar
 // ────────────────────────────────────────────────────────
+//
+//  ┌──────┬────────┬──────────────┬────────┬───────────────────┬──────────┐
+//  │ FPS  │ FTIME  │ SGSR         │ FG     │ GPU               │ RAM      │
+//  │ 120  │ 8.3 ms │ DLSS 720→4K │ x2     │ Adreno 750        │ 5.1/8 GB │
+//  └──────┴────────┴──────────────┴────────┴───────────────────┴──────────┘
+//
+// Each segment has its own background pill so it reads like MangoHud columns.
 
 void OverlayMenu::RenderHUD(int width, int height) {
 #ifdef ADRENA_OVERLAY_ENABLED
     Config& cfg = GetConfig();
-
-    // Don't render HUD if FPS display is off and menu is hidden
     if (!cfg.fps_display && !m_visible) return;
 
-    // ── Smoothed FPS / Frame Time (updated every 0.5s) ──
-    static float s_fps = 0.0f;
-    static float s_frameTime = 0.0f;
-    static float s_lastUpdate = 0.0f;
+    // ── Throttled metric sampling ──
+    static float   s_fps = 0.0f, s_ft = 0.0f, s_lastSmooth = 0.0f;
+    static DWORDLONG s_ramUsed = 0, s_ramTotal = 0;
+    static float   s_lastSys = 0.0f;
     float now = (float)ImGui::GetTime();
-    if (now - s_lastUpdate > 0.5f) {
+
+    if (now - s_lastSmooth > 0.5f) {
         s_fps = ImGui::GetIO().Framerate;
-        s_frameTime = (s_fps > 0.0f) ? (1000.0f / s_fps) : 0.0f;
-        s_lastUpdate = now;
+        s_ft  = (s_fps > 0.0f) ? (1000.0f / s_fps) : 0.0f;
+        s_lastSmooth = now;
     }
-
-    // ── System stats (updated every 1s to avoid overhead) ──
-    static DWORDLONG s_ramUsedMB = 0, s_ramTotalMB = 0;
-    static float s_lastSysUpdate = 0.0f;
-    if (now - s_lastSysUpdate > 1.0f) {
-        MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
-        if (GlobalMemoryStatusEx(&memInfo)) {
-            s_ramUsedMB  = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
-            s_ramTotalMB = memInfo.ullTotalPhys / (1024 * 1024);
+    if (now - s_lastSys > 1.5f) {
+        MEMORYSTATUSEX m = {}; m.dwLength = sizeof(m);
+        if (GlobalMemoryStatusEx(&m)) {
+            s_ramUsed  = (m.ullTotalPhys - m.ullAvailPhys) / (1024*1024*1024ULL ? 1 : 1024*1024);
+            s_ramTotal = m.ullTotalPhys / (1024*1024);
+            // keep in MB for precision
         }
-        s_lastSysUpdate = now;
+        s_lastSys = now;
     }
 
-    // ── HUD Window (top-left corner) ──
-    if (cfg.fps_display || m_visible) {
-        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.55f);
-        ImGuiWindowFlags hudFlags =
-            ImGuiWindowFlags_NoDecoration     |
-            ImGuiWindowFlags_NoInputs         |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings  |
-            ImGuiWindowFlags_NoFocusOnAppearing|
-            ImGuiWindowFlags_NoNav;
+    float ramUsedGB  = (float)s_ramUsed  / 1024.0f;
+    float ramTotalGB = (float)s_ramTotal / 1024.0f;
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.10f, 1.0f));
+    // FPS color
+    ImVec4 fpsCol;
+    if      (s_fps >= 60.0f) fpsCol = COL_GREEN;
+    else if (s_fps >= 30.0f) fpsCol = COL_YELLOW;
+    else                      fpsCol = COL_RED;
 
-        if (ImGui::Begin("##HUD", nullptr, hudFlags)) {
+    // frame time color (ms thresholds)
+    ImVec4 ftCol;
+    if      (s_ft <= 16.7f) ftCol = COL_GREEN;
+    else if (s_ft <= 33.3f) ftCol = COL_YELLOW;
+    else                     ftCol = COL_RED;
+
+    // ── HUD window — pinned top-left, no decorations ──
+    if (!cfg.fps_display) goto startup_notif;
+
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(0, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+
+    if (ImGui::Begin("##HUD", nullptr,
+            ImGuiWindowFlags_NoDecoration      |
+            ImGuiWindowFlags_NoInputs           |
+            ImGuiWindowFlags_AlwaysAutoResize   |
+            ImGuiWindowFlags_NoSavedSettings    |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav              |
+            ImGuiWindowFlags_NoBackground)) {
+
+        ImDrawList* dl  = ImGui::GetWindowDrawList();
+        ImVec2      cur = ImGui::GetCursorScreenPos();
+        float       h   = 28.0f;
+        float       x   = cur.x;
+        float       y   = cur.y;
+
+        // Helper lambdas (C++11 style)
+        auto PillBg = [&](float px, float pw, ImVec4 bg) {
+            dl->AddRectFilled(ImVec2(px, y), ImVec2(px + pw, y + h),
+                ImGui::ColorConvertFloat4ToU32(bg), 5.0f);
+        };
+        auto PillBorder = [&](float px, float pw, ImVec4 border) {
+            dl->AddRect(ImVec2(px, y), ImVec2(px + pw, y + h),
+                ImGui::ColorConvertFloat4ToU32(border), 5.0f, 0, 1.0f);
+        };
+
+        // Build segments
+        struct Seg { char top[32]; char bot[32]; ImVec4 topCol; ImVec4 bg; };
+        Seg segs[6];
+        int nSeg = 0;
+
+        // FPS
+        snprintf(segs[nSeg].top, 32, "FPS");
+        snprintf(segs[nSeg].bot, 32, "%.0f", s_fps);
+        segs[nSeg].topCol = COL_TEXT_LO;
+        segs[nSeg].bg     = ImVec4(fpsCol.x*0.15f, fpsCol.y*0.15f, fpsCol.z*0.15f, 0.92f);
+        nSeg++;
+
+        // Frame time
+        snprintf(segs[nSeg].top, 32, "FTIME");
+        snprintf(segs[nSeg].bot, 32, "%.1fms", s_ft);
+        segs[nSeg].topCol = COL_TEXT_LO;
+        segs[nSeg].bg     = ImVec4(0.08f, 0.08f, 0.14f, 0.92f);
+        nSeg++;
+
+        // SGSR
+        {
             SharedState* ss = GetSharedState();
-
-            // ── FPS + Frame Time (big, color-coded) ──
-            if (cfg.fps_display) {
-                ImVec4 fpsColor;
-                if (s_fps >= 60)       fpsColor = ImVec4(0.20f, 1.00f, 0.40f, 1.0f);
-                else if (s_fps >= 30)  fpsColor = ImVec4(1.00f, 0.85f, 0.20f, 1.0f);
-                else                   fpsColor = ImVec4(1.00f, 0.30f, 0.30f, 1.0f);
-
-                ImGui::TextColored(fpsColor, "%.0f FPS", s_fps);
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.65f, 1.0f), "%.1f ms", s_frameTime);
-            }
-
-            // ── Feature status pills ──
+            snprintf(segs[nSeg].top, 32, "SGSR");
+            segs[nSeg].bg = ImVec4(0.08f, 0.08f, 0.14f, 0.92f);
+            segs[nSeg].topCol = COL_TEXT_LO;
             if (ss) {
                 SharedStateLock l(&ss->lock);
-
-                // SGSR status
-                if (ss->sgsr_enabled || ss->sgsr_active) {
-                    ImVec4 col = ss->sgsr_active
-                        ? ImVec4(0.20f, 1.00f, 0.40f, 1.0f)
-                        : ImVec4(0.90f, 0.80f, 0.20f, 1.0f);
-                    ImGui::TextColored(col, "SGSR %s",
-                        ss->sgsr_active ? "ON (DLSS)" : "ON (Sharp)");
+                if (ss->sgsr_active) {
+                    snprintf(segs[nSeg].bot, 32, "DLSS %.0f%%", ss->render_scale * 100.0f);
+                    segs[nSeg].bg = ImVec4(0.05f, 0.20f, 0.10f, 0.92f);
+                } else if (ss->sgsr_enabled) {
+                    snprintf(segs[nSeg].bot, 32, "SHARP");
+                    segs[nSeg].bg = ImVec4(0.18f, 0.14f, 0.04f, 0.92f);
                 } else {
-                    ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.50f, 1.0f), "SGSR OFF");
+                    snprintf(segs[nSeg].bot, 32, "OFF");
                 }
+            } else { snprintf(segs[nSeg].bot, 32, "OFF"); }
+        }
+        nSeg++;
 
-                // FG status on same line
-                ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.35f, 1.0f), "|");
-                ImGui::SameLine();
+        // FG
+        {
+            SharedState* ss = GetSharedState();
+            snprintf(segs[nSeg].top, 32, "FG");
+            segs[nSeg].topCol = COL_TEXT_LO;
+            segs[nSeg].bg     = ImVec4(0.08f, 0.08f, 0.14f, 0.92f);
+            if (ss) {
+                SharedStateLock l(&ss->lock);
                 if (ss->fg_mode > 1) {
-                    ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f),
-                        "FG x%d", ss->fg_mode);
-                } else {
-                    ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.50f, 1.0f), "FG OFF");
-                }
+                    snprintf(segs[nSeg].bot, 32, "x%d", ss->fg_mode);
+                    segs[nSeg].bg = ImVec4(0.04f, 0.14f, 0.22f, 0.92f);
+                } else { snprintf(segs[nSeg].bot, 32, "OFF"); }
+            } else { snprintf(segs[nSeg].bot, 32, "OFF"); }
+        }
+        nSeg++;
 
-                // Resolution (if DLSS path)
-                if (ss->sgsr_active && ss->render_width > 0) {
-                    ImGui::TextColored(ImVec4(0.50f, 0.50f, 0.55f, 1.0f),
-                        "%ux%u > %ux%u (%.0f%%)",
-                        ss->render_width, ss->render_height,
-                        ss->display_width, ss->display_height,
-                        ss->render_scale * 100.0f);
-                }
-            }
-
-            // ── System info line ──
-            if (s_ramTotalMB > 0) {
-                ImGui::TextColored(ImVec4(0.50f, 0.50f, 0.55f, 1.0f),
-                    "RAM %llu/%llu MB", s_ramUsedMB, s_ramTotalMB);
-            }
-
-            // ── GPU name (compact) ──
+        // GPU name
+        {
+            SharedState* ss = GetSharedState();
+            snprintf(segs[nSeg].top, 32, "GPU");
+            snprintf(segs[nSeg].bot, 32, "Adreno");
+            segs[nSeg].topCol = COL_TEXT_LO;
+            segs[nSeg].bg     = ImVec4(0.08f, 0.08f, 0.14f, 0.92f);
             if (ss) {
                 SharedStateLock l(&ss->lock);
-                if (ss->is_adreno) {
-                    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f),
-                        "Adreno (Tier %d)", ss->adreno_tier);
-                }
+                if (ss->is_adreno && ss->adreno_tier > 0)
+                    snprintf(segs[nSeg].bot, 32, "A-%dxx", ss->adreno_tier * 100);
             }
         }
-        ImGui::End();
+        nSeg++;
 
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar(2);
+        // RAM
+        snprintf(segs[nSeg].top, 32, "RAM");
+        snprintf(segs[nSeg].bot, 32, "%.1f/%.0fG", ramUsedGB, ramTotalGB);
+        segs[nSeg].topCol = COL_TEXT_LO;
+        segs[nSeg].bg     = ImVec4(0.08f, 0.08f, 0.14f, 0.92f);
+        nSeg++;
+
+        // ── Measure and draw segments ──
+        float padX = 10.0f, gap = 2.0f;
+        float totalW = 0.0f;
+        float segW[6] = {};
+        for (int i = 0; i < nSeg; i++) {
+            float tw = ImGui::CalcTextSize(segs[i].top).x;
+            float bw = ImGui::CalcTextSize(segs[i].bot).x;
+            segW[i]  = (tw > bw ? tw : bw) + padX * 2.0f;
+            totalW  += segW[i] + (i > 0 ? gap : 0.0f);
+        }
+
+        // Draw background capsule behind everything
+        dl->AddRectFilled(ImVec2(x - 2, y - 1), ImVec2(x + totalW + 2, y + h + 1),
+            ImVec4(0, 0, 0, 0), 6.0f);
+
+        float cx = x;
+        for (int i = 0; i < nSeg; i++) {
+            float sw = segW[i];
+            // pill background
+            PillBg(cx, sw, segs[i].bg);
+            // border: only first and last get outer border; others get inner divider
+            if (i == 0 || i == nSeg - 1)
+                PillBorder(cx, sw, ImVec4(0.25f, 0.27f, 0.40f, 0.60f));
+            else
+                dl->AddLine(ImVec2(cx + sw, y + 3), ImVec2(cx + sw, y + h - 3),
+                    ImGui::ColorConvertFloat4ToU32(ImVec4(0.22f, 0.24f, 0.35f, 0.80f)));
+
+            // label top
+            float lw = ImGui::CalcTextSize(segs[i].top).x;
+            dl->AddText(ImVec2(cx + (sw - lw) * 0.5f, y + 2),
+                ImGui::ColorConvertFloat4ToU32(segs[i].topCol),
+                segs[i].top);
+
+            // value bottom
+            ImVec4 valCol = (i == 0) ? fpsCol : (i == 1) ? ftCol : COL_TEXT_HI;
+            float vw = ImGui::CalcTextSize(segs[i].bot).x;
+            dl->AddText(ImVec2(cx + (sw - vw) * 0.5f, y + 13),
+                ImGui::ColorConvertFloat4ToU32(valCol),
+                segs[i].bot);
+
+            cx += sw + gap;
+        }
+
+        // Advance the window cursor so ImGui knows the size
+        ImGui::Dummy(ImVec2(totalW, h));
     }
+    ImGui::End();
+    ImGui::PopStyleVar(3);
 
-    // ── Startup notification (fades out after 4 seconds) ──
-    static float showTime = (float)ImGui::GetTime();
-    float elapsed = now - showTime;
+startup_notif:
+    // ── Startup banner (bottom-center, fades after 4 s) ──
+    static float s_showTime = now;
+    float elapsed = now - s_showTime;
     if (elapsed < 4.0f) {
-        float alpha = (elapsed < 3.0f) ? 0.90f : 0.90f * (1.0f - (elapsed - 3.0f));
+        float alpha = (elapsed < 2.8f) ? 1.0f : (1.0f - (elapsed - 2.8f) / 1.2f);
 
-        ImGui::SetNextWindowPos(
-            ImVec2(width * 0.5f - 180.0f, (float)height - 65.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(alpha * 0.7f);
+        float bw = 310.0f, bh = 30.0f;
+        ImGui::SetNextWindowPos(ImVec2((float)width * 0.5f - bw * 0.5f, (float)height - bh - 12.0f),
+            ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(bw, bh));
+        ImGui::SetNextWindowBgAlpha(0.0f);
 
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 10));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.06f, 0.12f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.50f, 1.00f, alpha * 0.4f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,    ImVec2(0, 0));
 
-        ImGuiWindowFlags notifyFlags =
-            ImGuiWindowFlags_NoDecoration     |
-            ImGuiWindowFlags_NoInputs         |
-            ImGuiWindowFlags_AlwaysAutoResize |
-            ImGuiWindowFlags_NoSavedSettings  |
-            ImGuiWindowFlags_NoFocusOnAppearing|
-            ImGuiWindowFlags_NoNav;
+        if (ImGui::Begin("##Banner", nullptr,
+                ImGuiWindowFlags_NoDecoration      |
+                ImGuiWindowFlags_NoInputs           |
+                ImGuiWindowFlags_NoSavedSettings    |
+                ImGuiWindowFlags_NoFocusOnAppearing |
+                ImGuiWindowFlags_NoNav              |
+                ImGuiWindowFlags_NoBackground)) {
 
-        if (ImGui::Begin("##Notify", nullptr, notifyFlags)) {
-            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, alpha),
-                "AdrenaProxy v2.0");
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.70f, alpha),
-                "— Press HOME for settings");
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            ImVec2 bp = ImGui::GetWindowPos();
+
+            dl->AddRectFilled(ImVec2(bp.x, bp.y), ImVec2(bp.x + bw, bp.y + bh),
+                ImGui::ColorConvertFloat4ToU32(ImVec4(0.06f, 0.06f, 0.12f, 0.88f * alpha)), 8.0f);
+            dl->AddRect(ImVec2(bp.x, bp.y), ImVec2(bp.x + bw, bp.y + bh),
+                ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.42f, 0.0f, 0.35f * alpha)), 8.0f);
+
+            // left: logo
+            float tx = bp.x + 14.0f, ty = bp.y + 7.0f;
+            dl->AddText(ImVec2(tx, ty),
+                ImGui::ColorConvertFloat4ToU32(ImVec4(1.0f, 0.42f, 0.0f, alpha)), "ADRENAP");
+            float lw = ImGui::CalcTextSize("ADRENAP").x;
+            dl->AddText(ImVec2(tx + lw, ty),
+                ImGui::ColorConvertFloat4ToU32(ImVec4(0.9f, 0.92f, 0.96f, alpha)), "ROXY v2.0");
+
+            // right: hint
+            const char* hint = "HOME for settings";
+            float hw = ImGui::CalcTextSize(hint).x;
+            dl->AddText(ImVec2(bp.x + bw - hw - 14.0f, ty),
+                ImGui::ColorConvertFloat4ToU32(ImVec4(0.55f, 0.58f, 0.70f, alpha * 0.85f)), hint);
+
+            ImGui::Dummy(ImVec2(bw, bh));
         }
         ImGui::End();
-
-        ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(2);
     }
 #endif
 }
 
 // ────────────────────────────────────────────────────────
-// WndProc — input handling for overlay toggle
+// WndProc
 // ────────────────────────────────────────────────────────
 
 LRESULT CALLBACK OverlayMenu::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 #ifdef ADRENA_OVERLAY_ENABLED
-    // Forward input to ImGui
-    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp))
-        return true;
+    if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wp, lp)) return true;
 #endif
     return 0;
 }
