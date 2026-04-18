@@ -407,13 +407,22 @@ HRESULT ProxySwapChain::Present(UINT SyncInterval, UINT Flags) {
 // ────────────────────────────────────────────────────────
 
 LRESULT CALLBACK ProxySwapChain::StaticWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    // Toggle overlay on hotkey
     if (msg == WM_KEYDOWN) {
         Config& cfg = GetConfig();
-        if (wp == cfg.toggle_key && s_instance && s_instance->m_overlay) {
+        if (wp == (WPARAM)cfg.toggle_key && s_instance && s_instance->m_overlay) {
             s_instance->m_overlay->Toggle();
             return 0;
         }
     }
+
+    // Forward input to ImGui for overlay interaction (mouse, keyboard, etc.)
+    if (s_instance && s_instance->m_overlay) {
+        LRESULT result = OverlayMenu::WndProc(hwnd, msg, wp, lp);
+        if (result)
+            return result;
+    }
+
     if (s_origWndProc)
         return CallWindowProcA(s_origWndProc, hwnd, msg, wp, lp);
     return DefWindowProcA(hwnd, msg, wp, lp);

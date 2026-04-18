@@ -39,40 +39,77 @@ bool OverlayMenu::InitWin32(HWND hwnd) {
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.IniFilename = nullptr; // Don't save imgui.ini
 
-    // Dark theme with Adreno-inspired colors
+    // ── Premium dark theme — Adreno blue accent ──
     ImGui::StyleColorsDark();
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding    = 6.0f;
-    style.FrameRounding     = 4.0f;
+    style.WindowRounding    = 8.0f;
+    style.ChildRounding     = 6.0f;
+    style.FrameRounding     = 5.0f;
+    style.PopupRounding     = 6.0f;
     style.GrabRounding      = 4.0f;
-    style.TabRounding       = 4.0f;
-    style.ScrollbarRounding = 6.0f;
-    style.WindowPadding     = ImVec2(12, 12);
-    style.FramePadding      = ImVec2(8, 4);
-    style.ItemSpacing       = ImVec2(8, 6);
+    style.TabRounding       = 5.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.WindowPadding     = ImVec2(14, 14);
+    style.FramePadding      = ImVec2(10, 5);
+    style.ItemSpacing       = ImVec2(10, 7);
+    style.ItemInnerSpacing  = ImVec2(8, 4);
+    style.WindowBorderSize  = 1.0f;
+    style.FrameBorderSize   = 0.0f;
+    style.TabBorderSize     = 0.0f;
+    style.GrabMinSize       = 12.0f;
+    style.ScrollbarSize     = 12.0f;
+    style.WindowTitleAlign  = ImVec2(0.5f, 0.5f);
 
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg]           = ImVec4(0.08f, 0.08f, 0.12f, 0.94f);
-    colors[ImGuiCol_TitleBg]            = ImVec4(0.10f, 0.10f, 0.16f, 1.00f);
-    colors[ImGuiCol_TitleBgActive]      = ImVec4(0.16f, 0.16f, 0.28f, 1.00f);
-    colors[ImGuiCol_Tab]                = ImVec4(0.12f, 0.12f, 0.20f, 0.86f);
-    colors[ImGuiCol_TabHovered]         = ImVec4(0.28f, 0.28f, 0.50f, 0.80f);
-    colors[ImGuiCol_TabActive]          = ImVec4(0.20f, 0.20f, 0.40f, 1.00f);
-    colors[ImGuiCol_FrameBg]            = ImVec4(0.12f, 0.12f, 0.18f, 1.00f);
-    colors[ImGuiCol_FrameBgHovered]     = ImVec4(0.20f, 0.20f, 0.32f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]      = ImVec4(0.24f, 0.24f, 0.40f, 1.00f);
-    colors[ImGuiCol_Button]             = ImVec4(0.20f, 0.20f, 0.36f, 0.65f);
-    colors[ImGuiCol_ButtonHovered]      = ImVec4(0.30f, 0.30f, 0.52f, 0.80f);
-    colors[ImGuiCol_ButtonActive]       = ImVec4(0.36f, 0.36f, 0.60f, 1.00f);
-    colors[ImGuiCol_CheckMark]          = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
-    colors[ImGuiCol_SliderGrab]         = ImVec4(0.40f, 0.70f, 1.00f, 0.80f);
-    colors[ImGuiCol_SliderGrabActive]   = ImVec4(0.50f, 0.80f, 1.00f, 1.00f);
-    colors[ImGuiCol_Header]             = ImVec4(0.20f, 0.20f, 0.36f, 0.50f);
-    colors[ImGuiCol_HeaderHovered]      = ImVec4(0.28f, 0.28f, 0.48f, 0.60f);
-    colors[ImGuiCol_HeaderActive]       = ImVec4(0.32f, 0.32f, 0.54f, 0.80f);
-    colors[ImGuiCol_Text]               = ImVec4(0.92f, 0.92f, 0.96f, 1.00f);
-    colors[ImGuiCol_TextDisabled]       = ImVec4(0.50f, 0.50f, 0.56f, 1.00f);
-    colors[ImGuiCol_Border]             = ImVec4(0.28f, 0.28f, 0.40f, 0.50f);
+    ImVec4* c = style.Colors;
+    // Background
+    c[ImGuiCol_WindowBg]           = ImVec4(0.06f, 0.06f, 0.10f, 0.96f);
+    c[ImGuiCol_ChildBg]            = ImVec4(0.07f, 0.07f, 0.11f, 0.60f);
+    c[ImGuiCol_PopupBg]            = ImVec4(0.08f, 0.08f, 0.12f, 0.94f);
+    // Title bar
+    c[ImGuiCol_TitleBg]            = ImVec4(0.08f, 0.08f, 0.14f, 1.00f);
+    c[ImGuiCol_TitleBgActive]      = ImVec4(0.12f, 0.14f, 0.24f, 1.00f);
+    c[ImGuiCol_TitleBgCollapsed]   = ImVec4(0.06f, 0.06f, 0.10f, 0.75f);
+    // Tabs — blue accent
+    c[ImGuiCol_Tab]                = ImVec4(0.10f, 0.12f, 0.20f, 0.90f);
+    c[ImGuiCol_TabHovered]         = ImVec4(0.22f, 0.35f, 0.65f, 0.85f);
+    c[ImGuiCol_TabActive]          = ImVec4(0.18f, 0.28f, 0.55f, 1.00f);
+    c[ImGuiCol_TabUnfocused]       = ImVec4(0.08f, 0.08f, 0.14f, 0.90f);
+    c[ImGuiCol_TabUnfocusedActive] = ImVec4(0.12f, 0.18f, 0.35f, 1.00f);
+    // Frame (sliders, inputs, combos)
+    c[ImGuiCol_FrameBg]            = ImVec4(0.10f, 0.10f, 0.16f, 1.00f);
+    c[ImGuiCol_FrameBgHovered]     = ImVec4(0.16f, 0.18f, 0.30f, 1.00f);
+    c[ImGuiCol_FrameBgActive]      = ImVec4(0.20f, 0.24f, 0.40f, 1.00f);
+    // Buttons
+    c[ImGuiCol_Button]             = ImVec4(0.14f, 0.18f, 0.32f, 0.80f);
+    c[ImGuiCol_ButtonHovered]      = ImVec4(0.22f, 0.30f, 0.55f, 0.90f);
+    c[ImGuiCol_ButtonActive]       = ImVec4(0.28f, 0.38f, 0.65f, 1.00f);
+    // Interactive accents — Adreno blue
+    c[ImGuiCol_CheckMark]          = ImVec4(0.35f, 0.65f, 1.00f, 1.00f);
+    c[ImGuiCol_SliderGrab]         = ImVec4(0.30f, 0.55f, 1.00f, 0.85f);
+    c[ImGuiCol_SliderGrabActive]   = ImVec4(0.40f, 0.70f, 1.00f, 1.00f);
+    // Headers (collapsing, tree nodes)
+    c[ImGuiCol_Header]             = ImVec4(0.14f, 0.18f, 0.32f, 0.55f);
+    c[ImGuiCol_HeaderHovered]      = ImVec4(0.22f, 0.30f, 0.52f, 0.70f);
+    c[ImGuiCol_HeaderActive]       = ImVec4(0.26f, 0.36f, 0.60f, 0.85f);
+    // Separator
+    c[ImGuiCol_Separator]          = ImVec4(0.20f, 0.25f, 0.45f, 0.40f);
+    c[ImGuiCol_SeparatorHovered]   = ImVec4(0.30f, 0.45f, 0.80f, 0.60f);
+    c[ImGuiCol_SeparatorActive]    = ImVec4(0.35f, 0.55f, 1.00f, 0.80f);
+    // Scrollbar
+    c[ImGuiCol_ScrollbarBg]        = ImVec4(0.05f, 0.05f, 0.08f, 0.60f);
+    c[ImGuiCol_ScrollbarGrab]      = ImVec4(0.20f, 0.25f, 0.40f, 0.80f);
+    c[ImGuiCol_ScrollbarGrabHovered]= ImVec4(0.28f, 0.35f, 0.55f, 0.90f);
+    c[ImGuiCol_ScrollbarGrabActive]= ImVec4(0.35f, 0.45f, 0.70f, 1.00f);
+    // Text
+    c[ImGuiCol_Text]               = ImVec4(0.90f, 0.92f, 0.96f, 1.00f);
+    c[ImGuiCol_TextDisabled]       = ImVec4(0.45f, 0.47f, 0.52f, 1.00f);
+    // Border
+    c[ImGuiCol_Border]             = ImVec4(0.20f, 0.25f, 0.42f, 0.40f);
+    c[ImGuiCol_BorderShadow]       = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+    // Resize grip
+    c[ImGuiCol_ResizeGrip]         = ImVec4(0.22f, 0.35f, 0.65f, 0.25f);
+    c[ImGuiCol_ResizeGripHovered]  = ImVec4(0.30f, 0.50f, 0.90f, 0.50f);
+    c[ImGuiCol_ResizeGripActive]   = ImVec4(0.35f, 0.60f, 1.00f, 0.75f);
 
     ImGui_ImplWin32_Init(hwnd);
     AD_LOG_I("Overlay Win32 initialized");
@@ -280,29 +317,36 @@ void OverlayMenu::BuildUI() {
     Config& cfg = GetConfig();
     SharedState* ss = GetSharedState();
 
-    ImGui::SetNextWindowSize(ImVec2(420, 340), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(0.95f);
+    ImGui::SetNextWindowSize(ImVec2(440, 380), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.96f);
 
-    if (!ImGui::Begin("AdrenaProxy v2.0", &m_visible,
-        ImGuiWindowFlags_NoCollapse)) {
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.50f, 1.00f, 0.30f));
+
+    if (!ImGui::Begin("AdrenaProxy v2.0##Main", &m_visible,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar)) {
         ImGui::End();
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
         return;
     }
 
-    // ── Title bar info ──
-    ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "AdrenaProxy");
+    // ── Header bar ──
+    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "AdrenaProxy");
     ImGui::SameLine();
-    ImGui::TextDisabled("v2.0 — SGSR Upscaling + Frame Gen");
+    ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.60f, 1.0f), "v2.0");
 
     if (ss) {
         SharedStateLock l(&ss->lock);
         if (ss->is_adreno) {
-            ImGui::SameLine(ImGui::GetWindowWidth() - 100);
-            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "Adreno %d", ss->adreno_tier);
+            ImGui::SameLine(ImGui::GetWindowWidth() - 110);
+            ImGui::TextColored(ImVec4(0.20f, 1.00f, 0.40f, 1.0f), "Adreno Tier %d", ss->adreno_tier);
         }
     }
 
+    ImGui::Spacing();
     ImGui::Separator();
+    ImGui::Spacing();
 
     // ── Tab bar ──
     if (ImGui::BeginTabBar("##Tabs", ImGuiTabBarFlags_None)) {
@@ -531,6 +575,8 @@ void OverlayMenu::BuildUI() {
     }
 
     ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
 #endif
 }
 
@@ -542,83 +588,135 @@ void OverlayMenu::RenderHUD(int width, int height) {
 #ifdef ADRENA_OVERLAY_ENABLED
     Config& cfg = GetConfig();
 
-    // Don't render HUD if both FPS and overlay are hidden
+    // Don't render HUD if FPS display is off and menu is hidden
     if (!cfg.fps_display && !m_visible) return;
 
-    // ── FPS Counter + Status (top-left) ──
+    // ── Smoothed FPS / Frame Time (updated every 0.5s) ──
+    static float s_fps = 0.0f;
+    static float s_frameTime = 0.0f;
+    static float s_lastUpdate = 0.0f;
+    float now = (float)ImGui::GetTime();
+    if (now - s_lastUpdate > 0.5f) {
+        s_fps = ImGui::GetIO().Framerate;
+        s_frameTime = (s_fps > 0.0f) ? (1000.0f / s_fps) : 0.0f;
+        s_lastUpdate = now;
+    }
+
+    // ── System stats (updated every 1s to avoid overhead) ──
+    static DWORDLONG s_ramUsedMB = 0, s_ramTotalMB = 0;
+    static float s_lastSysUpdate = 0.0f;
+    if (now - s_lastSysUpdate > 1.0f) {
+        MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+        if (GlobalMemoryStatusEx(&memInfo)) {
+            s_ramUsedMB  = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024 * 1024);
+            s_ramTotalMB = memInfo.ullTotalPhys / (1024 * 1024);
+        }
+        s_lastSysUpdate = now;
+    }
+
+    // ── HUD Window (top-left corner) ──
     if (cfg.fps_display || m_visible) {
-        ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(cfg.overlay_opacity * 0.4f);
+        ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.55f);
         ImGuiWindowFlags hudFlags =
-            ImGuiWindowFlags_NoDecoration    |
-            ImGuiWindowFlags_NoInputs        |
-            ImGuiWindowFlags_AlwaysAutoResize|
-            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoDecoration     |
+            ImGuiWindowFlags_NoInputs         |
+            ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings  |
             ImGuiWindowFlags_NoFocusOnAppearing|
             ImGuiWindowFlags_NoNav;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.10f, 1.0f));
 
         if (ImGui::Begin("##HUD", nullptr, hudFlags)) {
             SharedState* ss = GetSharedState();
 
-            // FPS counter
+            // ── FPS + Frame Time (big, color-coded) ──
             if (cfg.fps_display) {
-                static float fps = 0.0f;
-                static float lastTime = 0.0f;
-                float now = ImGui::GetTime();
-                if (now - lastTime > 0.5f) {
-                    fps = ImGui::GetIO().Framerate;
-                    lastTime = now;
-                }
-
-                // Color-code FPS
                 ImVec4 fpsColor;
-                if (fps >= 60)       fpsColor = ImVec4(0.2f, 1.0f, 0.4f, 1.0f); // Green
-                else if (fps >= 30)  fpsColor = ImVec4(1.0f, 0.8f, 0.2f, 1.0f); // Yellow
-                else                 fpsColor = ImVec4(1.0f, 0.3f, 0.3f, 1.0f); // Red
+                if (s_fps >= 60)       fpsColor = ImVec4(0.20f, 1.00f, 0.40f, 1.0f);
+                else if (s_fps >= 30)  fpsColor = ImVec4(1.00f, 0.85f, 0.20f, 1.0f);
+                else                   fpsColor = ImVec4(1.00f, 0.30f, 0.30f, 1.0f);
 
-                ImGui::TextColored(fpsColor, "FPS: %.0f", fps);
+                ImGui::TextColored(fpsColor, "%.0f FPS", s_fps);
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.65f, 1.0f), "%.1f ms", s_frameTime);
             }
 
-            // SGSR + FG status
+            // ── Feature status pills ──
             if (ss) {
                 SharedStateLock l(&ss->lock);
 
                 // SGSR status
                 if (ss->sgsr_enabled || ss->sgsr_active) {
-                    ImVec4 sgsrColor = ss->sgsr_active
-                        ? ImVec4(0.2f, 1.0f, 0.4f, 1.0f)  // Green — DLSS path
-                        : ImVec4(0.8f, 0.8f, 0.2f, 1.0f);  // Yellow — DXGI path
-                    const char* sgsrText = ss->sgsr_active ? "SGSR: ON (DLSS)" : "SGSR: ON (Sharp)";
-                    ImGui::TextColored(sgsrColor, "%s", sgsrText);
+                    ImVec4 col = ss->sgsr_active
+                        ? ImVec4(0.20f, 1.00f, 0.40f, 1.0f)
+                        : ImVec4(0.90f, 0.80f, 0.20f, 1.0f);
+                    ImGui::TextColored(col, "SGSR %s",
+                        ss->sgsr_active ? "ON (DLSS)" : "ON (Sharp)");
                 } else {
-                    ImGui::TextDisabled("SGSR: OFF");
+                    ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.50f, 1.0f), "SGSR OFF");
                 }
 
-                // FG status
+                // FG status on same line
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.30f, 0.30f, 0.35f, 1.0f), "|");
+                ImGui::SameLine();
                 if (ss->fg_mode > 1) {
-                    ImGui::TextColored(
-                        ImVec4(0.4f, 0.7f, 1.0f, 1.0f),
-                        "FG: x%d", ss->fg_mode);
+                    ImGui::TextColored(ImVec4(0.40f, 0.75f, 1.00f, 1.0f),
+                        "FG x%d", ss->fg_mode);
+                } else {
+                    ImGui::TextColored(ImVec4(0.45f, 0.45f, 0.50f, 1.0f), "FG OFF");
                 }
 
-                // Render resolution (if DLSS path active)
+                // Resolution (if DLSS path)
                 if (ss->sgsr_active && ss->render_width > 0) {
-                    ImGui::TextDisabled("%ux%u → %ux%u",
+                    ImGui::TextColored(ImVec4(0.50f, 0.50f, 0.55f, 1.0f),
+                        "%ux%u > %ux%u (%.0f%%)",
                         ss->render_width, ss->render_height,
-                        ss->display_width, ss->display_height);
+                        ss->display_width, ss->display_height,
+                        ss->render_scale * 100.0f);
+                }
+            }
+
+            // ── System info line ──
+            if (s_ramTotalMB > 0) {
+                ImGui::TextColored(ImVec4(0.50f, 0.50f, 0.55f, 1.0f),
+                    "RAM %llu/%llu MB", s_ramUsedMB, s_ramTotalMB);
+            }
+
+            // ── GPU name (compact) ──
+            if (ss) {
+                SharedStateLock l(&ss->lock);
+                if (ss->is_adreno) {
+                    ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f),
+                        "Adreno (Tier %d)", ss->adreno_tier);
                 }
             }
         }
         ImGui::End();
+
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(2);
     }
 
     // ── Startup notification (fades out after 4 seconds) ──
-    static float showTime = ImGui::GetTime();
-    float elapsed = ImGui::GetTime() - showTime;
+    static float showTime = (float)ImGui::GetTime();
+    float elapsed = now - showTime;
     if (elapsed < 4.0f) {
-        float alpha = (elapsed < 3.0f) ? 0.85f : 0.85f * (1.0f - (elapsed - 3.0f));
-        ImGui::SetNextWindowPos(ImVec2(width / 2.0f - 160, height - 60), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(alpha);
+        float alpha = (elapsed < 3.0f) ? 0.90f : 0.90f * (1.0f - (elapsed - 3.0f));
+
+        ImGui::SetNextWindowPos(
+            ImVec2(width * 0.5f - 180.0f, (float)height - 65.0f), ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(alpha * 0.7f);
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(16, 10));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.06f, 0.12f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.30f, 0.50f, 1.00f, alpha * 0.4f));
+
         ImGuiWindowFlags notifyFlags =
             ImGuiWindowFlags_NoDecoration     |
             ImGuiWindowFlags_NoInputs         |
@@ -628,11 +726,16 @@ void OverlayMenu::RenderHUD(int width, int height) {
             ImGuiWindowFlags_NoNav;
 
         if (ImGui::Begin("##Notify", nullptr, notifyFlags)) {
-            ImGui::TextColored(
-                ImVec4(0.4f, 0.7f, 1.0f, alpha),
-                "AdrenaProxy v2.0 loaded — Press HOME for settings");
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, alpha),
+                "AdrenaProxy v2.0");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.65f, 0.65f, 0.70f, alpha),
+                "— Press HOME for settings");
         }
         ImGui::End();
+
+        ImGui::PopStyleColor(2);
+        ImGui::PopStyleVar(2);
     }
 #endif
 }
