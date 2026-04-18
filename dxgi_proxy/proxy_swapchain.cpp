@@ -340,18 +340,12 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
             m_sgsrCmdAlloc->Reset();
             m_sgsrCmdList->Reset(m_sgsrCmdAlloc, nullptr);
 
-            float scale = ss ? ss->render_scale : cfg.render_scale;
-            uint32_t rw = (uint32_t)(m_width * scale);
-            uint32_t rh = (uint32_t)(m_height * scale);
-            if (rw < 1) rw = 1;
-            if (rh < 1) rh = 1;
-
             SGSRParams params{};
             params.color   = backbuffer;
-            params.output  = backbuffer; // In-place: sharpening only
+            params.output  = backbuffer;
             params.sharpness = ss ? ss->sharpness : cfg.sharpness;
-            params.renderWidth  = rw;
-            params.renderHeight = rh;
+            params.renderWidth  = m_width;
+            params.renderHeight = m_height;
             params.displayWidth  = m_width;
             params.displayHeight = m_height;
 
@@ -361,7 +355,6 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
             ID3D12CommandList* lists[] = { m_sgsrCmdList };
             m_cmdQueue->ExecuteCommandLists(1, lists);
 
-            // Signal fence so next frame waits for completion
             m_sgsrFenceVal++;
             m_cmdQueue->Signal(m_sgsrFence, m_sgsrFenceVal);
 
@@ -369,27 +362,23 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
         }
     }
 
-    // ── Frame Generation: Pure Extra Present ──
-    // No compute shader, no GPU work — just extra Present(0,0) calls.
-    // This stimulates the Vulkan queue on Turnip/Adreno and boosts FPS
-    // without changing the backbuffer index (fixes ImGui flickering).
-    int extraPresents = fgMode - 1; // fgMode=2 → 1 extra, fgMode=4 → 3 extra
-    if (needFG && extraPresents > 0) {
-        for (int i = 0; i < extraPresents; i++) {
-            m_real->Present(0, 0);
-        }
-    }
-
-    // ── ImGui Overlay (drawn ONCE, on the final real backbuffer) ──
-    // Render whenever needOverlay is true (FPS counter or menu visible).
-    // OverlayMenu::Render internally handles m_visible for the menu,
-    // and RenderHUD always draws the FPS counter when fps_display is on.
+    // ── ImGui Overlay (drawn BEFORE FG presents to avoid flicker) ──
     if (needOverlay && m_overlay && m_cmdQueue) {
         ID3D12Resource* bb = nullptr;
         if (SUCCEEDED(m_real->GetBuffer(m_real->GetCurrentBackBufferIndex(),
             IID_ID3D12Resource, (void**)&bb))) {
             m_overlay->Render(m_cmdQueue, bb, m_width, m_height);
             bb->Release();
+        }
+    }
+
+    // ── Frame Generation: Pure Extra Present ──
+    // Extra Present(0,0) calls AFTER overlay is drawn on the backbuffer.
+    // Every presented frame now includes the overlay — no flicker.
+    int extraPresents = fgMode - 1;
+    if (needFG && extraPresents > 0) {
+        for (int i = 0; i < extraPresents; i++) {
+            m_real->Present(0, 0);
         }
     }
 

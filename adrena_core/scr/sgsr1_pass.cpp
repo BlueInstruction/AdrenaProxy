@@ -35,28 +35,44 @@ bool SGSR1Pass::Init(ID3D12Device* device, DXGI_FORMAT fmt,
 }
 
 void SGSR1Pass::Execute(ID3D12GraphicsCommandList* cl, const SGSRParams& p) {
-    if (!m_initialized || !cl) return;
+    if (!m_initialized || !cl || !p.color || !p.output || !m_intermediate) return;
 
-    // Transition input to SRV
-    if (p.color) {
-        D3D12_RESOURCE_DESC desc = p.color->GetDesc();
-        D3D12_RESOURCE_STATES state = (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
-            ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        Transition(cl, p.color, state, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
-    }
+    UINT descSize = m_device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_srvHeap->GetCPUDescriptorHandleForHeapStart();
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = m_srvHeap->GetGPUDescriptorHandleForHeapStart();
 
-    // Transition output to UAV
-    if (p.output) Transition(cl, p.output, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+    // Step 1: Copy backbuffer → intermediate (so we can read from intermediate, write to backbuffer)
+    Transition(cl, p.color, D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_COPY_SOURCE);
+    Transition(cl, m_intermediate, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
+    cl->CopyResource(m_intermediate, p.color);
 
-    // Set pipeline
+    // Step 2: Transition for compute — intermediate as SRV, backbuffer as UAV
+    Transition(cl, m_intermediate, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    Transition(cl, p.color, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+
+    // Step 3: Create SRV for intermediate (slot 0)
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.Format = m_format;
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+    srvDesc.Texture2D.MipLevels = 1;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    m_device->CreateShaderResourceView(m_intermediate, &srvDesc, cpuHandle);
+
+    // Create UAV for backbuffer (slot 2)
+    D3D12_CPU_DESCRIPTOR_HANDLE uavCpu = cpuHandle;
+    uavCpu.ptr += descSize * 2;
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.Format = m_format;
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+    m_device->CreateUnorderedAccessView(p.color, nullptr, &uavDesc, uavCpu);
+
+    // Step 4: Dispatch compute shader
     cl->SetComputeRootSignature(m_rootSig);
     cl->SetPipelineState(m_pso);
-    ID3D12DescriptorHeap* heaps[] = { m_srvHeap, m_samplerHeap };
-    cl->SetDescriptorHeaps(2, heaps);
-    cl->SetComputeRootDescriptorTable(0, m_srvHeap->GetGPUDescriptorHandleForHeapStart());
-    cl->SetComputeRootDescriptorTable(1, m_samplerHeap->GetGPUDescriptorHandleForHeapStart());
+    ID3D12DescriptorHeap* heaps[] = { m_srvHeap };
+    cl->SetDescriptorHeaps(1, heaps);
+    cl->SetComputeRootDescriptorTable(0, gpuHandle);
 
-    // Root constants: renderW, renderH, displayW, displayH, sharpness, frameCount
     struct { uint32_t rW, rH, dW, dH; float sharp; uint32_t frame; } consts;
     consts.rW = p.renderWidth; consts.rH = p.renderHeight;
     consts.dW = p.displayWidth; consts.dH = p.displayHeight;
@@ -67,14 +83,8 @@ void SGSR1Pass::Execute(ID3D12GraphicsCommandList* cl, const SGSRParams& p) {
     uint32_t dy = (m_displayH + 7) / 8;
     cl->Dispatch(dx, dy, 1);
 
-    // Transition back
-    if (p.output) Transition(cl, p.output, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PRESENT);
-    if (p.color) {
-        D3D12_RESOURCE_DESC desc = p.color->GetDesc();
-        D3D12_RESOURCE_STATES state = (desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS)
-            ? D3D12_RESOURCE_STATE_UNORDERED_ACCESS : D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-        Transition(cl, p.color, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, state);
-    }
+    // Step 5: Transition backbuffer back to PRESENT
+    Transition(cl, p.color, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_PRESENT);
 }
 
 void SGSR1Pass::Shutdown() {
@@ -198,11 +208,11 @@ bool SGSR1Pass::CreateIntermediate() {
     hr = m_device->CreateDescriptorHeap(&sampDesc, IID_ID3D12DescriptorHeap, (void**)&m_samplerHeap);
     if (FAILED(hr)) return false;
 
-    // Intermediate texture for copy
+    // Intermediate texture — same size as display (backbuffer copy target)
     D3D12_RESOURCE_DESC texDesc{};
     texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    texDesc.Width = m_renderW;
-    texDesc.Height = m_renderH;
+    texDesc.Width = m_displayW;
+    texDesc.Height = m_displayH;
     texDesc.DepthOrArraySize = 1;
     texDesc.MipLevels = 1;
     texDesc.Format = m_format;
