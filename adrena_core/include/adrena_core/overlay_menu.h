@@ -29,6 +29,14 @@ public:
 private:
     void BuildUI();
     void RenderHUD(int width, int height);
+    void DrawNavItem(const char* icon, const char* label, int index);
+    void DrawPageSGSR();
+    void DrawPageFrameGen();
+    void DrawPageDisplay();
+    void DrawPageAdvanced();
+    void DrawStatusBadge(const char* text, ImVec4 color);
+
+    int m_navPage = 0; // 0=SGSR  1=FG  2=Display  3=Advanced
 
     ID3D12Device*              m_device     = nullptr;
     ID3D12DescriptorHeap*      m_rtvHeap    = nullptr;
