@@ -356,13 +356,17 @@ void OverlayMenu::BuildUI() {
         // ═══════════════════════════════════════════
         if (ImGui::BeginTabItem("SGSR")) {
 
-            ImGui::Checkbox("Enable SGSR", &cfg.enabled);
-
-            // SGSR Mode selector
+            // ── SGSR Mode — Off automatically disables, selecting mode enables ──
             const char* modes[] = { "Off", "SGSR1 (Spatial)", "SGSR2 (Temporal)" };
-            int mode = (int)cfg.sgsr_mode;
-            if (ImGui::Combo("Mode", &mode, modes, 3)) {
-                cfg.sgsr_mode = (SGSRMode)mode;
+            int mode = cfg.enabled ? (int)cfg.sgsr_mode : 0;
+            if (ImGui::Combo("SGSR Mode", &mode, modes, 3)) {
+                if (mode == 0) {
+                    cfg.enabled = false;
+                    cfg.sgsr_mode = SGSRMode::Off;
+                } else {
+                    cfg.enabled = true;
+                    cfg.sgsr_mode = (SGSRMode)mode;
+                }
                 if (ss) {
                     SharedStateLock l(&ss->lock);
                     ss->sgsr_enabled = cfg.enabled;
@@ -371,14 +375,40 @@ void OverlayMenu::BuildUI() {
 
             // SGSR2 experimental warning
             if (cfg.sgsr_mode == SGSRMode::SGSR2) {
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
-                ImGui::TextWrapped("SGSR2 is experimental — requires depth + motion vectors.");
-                ImGui::TextWrapped("Only works in DLSS-compatible games via adrenaproxy_sgsr.dll.");
-                ImGui::PopStyleColor();
                 ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
+                ImGui::TextWrapped("SGSR2 experimental — needs depth + motion vectors (DLSS games only)");
+                ImGui::PopStyleColor();
             }
 
-            // Quality preset
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Resolution Presets ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Resolution Preset");
+            const char* resPresets[] = {
+                "Native (100%%)",
+                "1440x810 (75%%)",
+                "1280x720 (67%%)",
+                "1152x648 (60%%)",
+                "1024x576 (53%%)",
+                "960x540 (50%%)",
+                "800x450 (42%%)",
+                "640x360 (33%%)",
+                "Custom..."
+            };
+            static int resIdx = 8;
+            if (ImGui::Combo("Resolution", &resIdx, resPresets, 9)) {
+                const float scales[] = { 1.0f, 0.75f, 0.67f, 0.60f, 0.53f, 0.50f, 0.42f, 0.33f, 0.0f };
+                if (resIdx < 8) {
+                    cfg.custom_scale = scales[resIdx];
+                    cfg.ApplyRenderScale();
+                    if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+                }
+            }
+
+            // ── Quality Preset ──
             const char* qualities[] = {
                 "Ultra Quality (77%)",
                 "Quality (67%)",
@@ -389,45 +419,50 @@ void OverlayMenu::BuildUI() {
             int q = (int)cfg.quality;
             if (ImGui::Combo("Quality", &q, qualities, 5)) {
                 cfg.quality = (Quality)q;
+                cfg.custom_scale = 0.0f;
                 cfg.ApplyRenderScale();
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->render_scale = cfg.render_scale;
-                }
+                resIdx = 8;
+                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
             }
 
-            // Custom scale override
-            if (ImGui::SliderFloat("Render Scale", &cfg.custom_scale, 0.0f, 1.0f, "%.2f")) {
-                if (cfg.custom_scale < 0.05f) cfg.custom_scale = 0.0f; // 0 = auto
+            // ── Custom Render Scale ──
+            float scale = cfg.GetRenderScale();
+            if (ImGui::SliderFloat("Render Scale", &scale, 0.25f, 1.0f, "%.0f%%")) {
+                cfg.custom_scale = scale;
                 cfg.ApplyRenderScale();
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->render_scale = cfg.render_scale;
-                }
+                resIdx = 8;
+                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
             }
 
-            // Sharpness
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Visual Quality ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Visual Quality");
+
             if (ImGui::SliderFloat("Sharpness", &cfg.sharpness, 0.0f, 2.0f, "%.2f")) {
-                if (ss) {
-                    SharedStateLock l(&ss->lock);
-                    ss->sharpness = cfg.sharpness;
-                }
+                if (ss) { SharedStateLock l(&ss->lock); ss->sharpness = cfg.sharpness; }
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("0 = no sharpening, 0.8 = default, 2.0 = maximum");
 
-            // DLSS path indicator
+            ImGui::Spacing();
+
+            // ── Status ──
             if (ss) {
                 SharedStateLock l(&ss->lock);
+                ImGui::Separator();
+                ImGui::Spacing();
                 if (ss->sgsr_active) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.2f, 1.0f, 0.4f, 1.0f));
-                    ImGui::Text("Path: DLSS Proxy (real upscaling via adrenaproxy_sgsr.dll)");
-                    ImGui::Text("Render: %ux%u → Display: %ux%u",
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f),
+                        "Active: DLSS Proxy — %ux%u > %ux%u",
                         ss->render_width, ss->render_height,
                         ss->display_width, ss->display_height);
-                    ImGui::PopStyleColor();
+                } else if (cfg.enabled) {
+                    ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.2f, 1.0f),
+                        "Active: DXGI Sharpening (scale %.0f%%)", cfg.render_scale * 100.0f);
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.8f, 1.0f));
-                    ImGui::Text("Path: DXGI Proxy (sharpening only — no DLSS detected)");
-                    ImGui::PopStyleColor();
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "SGSR: Disabled");
                 }
             }
 
@@ -490,28 +525,40 @@ void OverlayMenu::BuildUI() {
         // ═══════════════════════════════════════════
         if (ImGui::BeginTabItem("Display")) {
 
+            // ── HUD Settings ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "HUD");
+
             ImGui::Checkbox("Show FPS Counter", &cfg.fps_display);
-            if (ss) {
-                SharedStateLock l(&ss->lock);
-                ss->fps_display = cfg.fps_display;
-            }
+            if (ss) { SharedStateLock l(&ss->lock); ss->fps_display = cfg.fps_display; }
 
-            ImGui::Checkbox("Show Overlay", &cfg.overlay_enabled);
-            if (ss) {
-                SharedStateLock l(&ss->lock);
-                ss->overlay_visible = cfg.overlay_enabled;
-            }
+            ImGui::Checkbox("Show Overlay on Startup", &cfg.overlay_enabled);
+            if (ss) { SharedStateLock l(&ss->lock); ss->overlay_visible = cfg.overlay_enabled; }
 
+            // HUD Layout toggle
+            static bool hudHorizontal = false;
+            const char* hudLayouts[] = { "Vertical (Detailed)", "Horizontal (Compact)" };
+            int hudIdx = hudHorizontal ? 1 : 0;
+            if (ImGui::Combo("HUD Layout", &hudIdx, hudLayouts, 2))
+                hudHorizontal = (hudIdx == 1);
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.55f, 1.0f), "Tip: Double-click HUD to toggle layout");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Appearance ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Appearance");
             ImGui::SliderFloat("Overlay Opacity", &cfg.overlay_opacity, 0.3f, 1.0f, "%.2f");
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Key bindings info
-            ImGui::TextDisabled("Key Bindings:");
+            // ── Key Bindings ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Key Bindings");
             ImGui::BulletText("HOME — Toggle this menu");
-            ImGui::BulletText("Changes apply instantly (no restart needed)");
+            ImGui::BulletText("Double-click HUD — Toggle layout");
+            ImGui::BulletText("Changes apply instantly");
 
             ImGui::EndTabItem();
         }
@@ -521,31 +568,55 @@ void OverlayMenu::BuildUI() {
         // ═══════════════════════════════════════════
         if (ImGui::BeginTabItem("Advanced")) {
 
-            // GPU info
+            // ── GPU Info ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "GPU Information");
             if (ss) {
                 SharedStateLock l(&ss->lock);
-                ImGui::Text("GPU: %s (Tier: Adreno %d)",
-                    ss->is_adreno ? "Adreno" : "Other",
-                    ss->adreno_tier);
+                ImGui::Text("GPU: %s", ss->is_adreno ? "Qualcomm Adreno" : "Other");
+                if (ss->is_adreno && ss->adreno_tier > 0)
+                    ImGui::Text("Tier: Adreno %dxx", ss->adreno_tier);
                 ImGui::Text("DLSS Proxy: %s", ss->sgsr_active ? "Active" : "Inactive");
             }
-
-            ImGui::Spacing();
-
-            // D3D options
-            ImGui::Checkbox("Force D3D11", &cfg.force_d3d11);
-            ImGui::SliderInt("Max Frame Queue", &cfg.max_frame_queue, 1, 5);
-
-            // VSync
-            if (ImGui::SliderInt("VSync", &cfg.vsync, 0, 2)) {
-                // 0=off, 1=on, 2=adaptive
+            // RAM info
+            {
+                MEMORYSTATUSEX memInfo = {}; memInfo.dwLength = sizeof(memInfo);
+                if (GlobalMemoryStatusEx(&memInfo)) {
+                    DWORDLONG usedMB = (memInfo.ullTotalPhys - memInfo.ullAvailPhys) / (1024*1024);
+                    DWORDLONG totalMB = memInfo.ullTotalPhys / (1024*1024);
+                    ImGui::Text("RAM: %llu / %llu MB (%lu%%)", usedMB, totalMB, memInfo.dwMemoryLoad);
+                }
             }
 
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Reset defaults button
+            // ── Rendering Options ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Rendering");
+
+            const char* vsyncModes[] = { "Off", "On", "Adaptive" };
+            int vsIdx = cfg.vsync;
+            if (vsIdx < 0 || vsIdx > 2) vsIdx = 0;
+            if (ImGui::Combo("VSync", &vsIdx, vsyncModes, 3))
+                cfg.vsync = vsIdx;
+
+            ImGui::SliderInt("Frame Queue Depth", &cfg.max_frame_queue, 1, 5);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Lower = less input lag, Higher = smoother");
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // ── Actions ──
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "Actions");
+
+            if (ImGui::Button("Save Config to INI", ImVec2(-1, 0))) {
+                cfg.Save(GetConfigPath());
+                AD_LOG_I("Config saved to INI");
+            }
+
+            ImGui::Spacing();
+
             if (ImGui::Button("Reset All to Defaults", ImVec2(-1, 0))) {
                 cfg = Config();
                 cfg.ApplyRenderScale();
@@ -556,17 +627,15 @@ void OverlayMenu::BuildUI() {
                     ss->fps_display     = true;
                     ss->sharpness       = cfg.sharpness;
                     ss->render_scale    = cfg.render_scale;
+                    ss->sgsr_enabled    = false;
                 }
                 AD_LOG_I("Config reset to defaults");
             }
 
             ImGui::Spacing();
-
-            // Save config button
-            if (ImGui::Button("Save Config to INI", ImVec2(-1, 0))) {
-                cfg.Save(GetConfigPath());
-                AD_LOG_I("Config saved to INI");
-            }
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.45f, 1.0f), "AdrenaProxy v2.0");
 
             ImGui::EndTabItem();
         }
