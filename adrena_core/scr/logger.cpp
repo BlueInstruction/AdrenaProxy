@@ -14,8 +14,13 @@ Logger::~Logger() { Shutdown(); }
 void Logger::Init(const char* filePath) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_initialized) return;
+#ifdef _MSC_VER
     m_file = _fsopen(filePath, "w", _SH_DENYNO);
     if (!m_file) m_file = _fsopen("adrena_proxy.log", "w", _SH_DENYNO);
+#else
+    m_file = std::fopen(filePath, "w");
+    if (!m_file) m_file = std::fopen("adrena_proxy.log", "w");
+#endif
     m_initialized = (m_file != nullptr);
     if (m_initialized) {
         std::fprintf(m_file, "[INFO ] === AdrenaProxy v2.0 Logger Initialized ===\n");
