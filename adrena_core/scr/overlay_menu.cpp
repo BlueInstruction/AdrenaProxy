@@ -1,7 +1,7 @@
-#include "overlay_menu.h"
-#include "config.h"
-#include "shared_state.h"
-#include "logger.h"
+#include "adrena_core/overlay_menu.h"
+#include "adrena_core/config.h"
+#include "adrena_core/shared_state.h"
+#include "adrena_core/logger.h"
 
 #ifdef ADRENA_OVERLAY_ENABLED
 #include <imgui.h>
@@ -9,7 +9,7 @@
 #ifdef ADRENA_DX12_OVERLAY
 #include <imgui_impl_dx12.h>
 #endif
-#include "Hack.h"
+#include "adrena_core/Hack.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
