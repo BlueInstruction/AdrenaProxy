@@ -45,6 +45,11 @@ public:
                 uint32_t displayW, uint32_t displayH);
     bool IsInitialized() const { return m_initialized; }
 
+    // Hot-reload: recompile shader from source string without tearing
+    // down descriptor heaps or intermediate resources.  Returns false
+    // if compilation fails (old PSO remains active).
+    bool ReloadShader(const char* hlslSource, uint32_t sourceLen);
+
 private:
     bool CreatePipeline();
     bool CreateIntermediate();

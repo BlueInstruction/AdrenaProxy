@@ -1,0 +1,1 @@
+add_adrena_plugin(plugin_example example_plugin.cpp)

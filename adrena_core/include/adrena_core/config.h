@@ -39,6 +39,16 @@ struct Config {
     void  ApplyRenderScale();
     void  Load(const std::string& path);
     void  Save(const std::string& path);
+
+    // ── Hot-reload support ──
+    // Returns true if the INI file has been modified since the last
+    // Load() or PollReload() call.  Call periodically (e.g. once per
+    // frame) and re-read on true.
+    bool  PollReload();
+
+private:
+    uint64_t m_lastWriteTime = 0;
+    std::string m_loadedPath;
 };
 
 Config& GetConfig();

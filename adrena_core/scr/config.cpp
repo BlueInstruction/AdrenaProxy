@@ -64,7 +64,29 @@ static int ParseVKey(const std::string& s) {
     return VK_HOME;
 }
 
+static uint64_t GetFileWriteTime(const std::string& path) {
+    WIN32_FILE_ATTRIBUTE_DATA attr{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &attr))
+        return 0;
+    return ((uint64_t)attr.ftLastWriteTime.dwHighDateTime << 32)
+         | (uint64_t)attr.ftLastWriteTime.dwLowDateTime;
+}
+
+bool Config::PollReload() {
+    if (m_loadedPath.empty()) return false;
+    uint64_t wt = GetFileWriteTime(m_loadedPath);
+    if (wt != 0 && wt != m_lastWriteTime) {
+        AD_LOG_I("Config: INI changed on disk, reloading");
+        Load(m_loadedPath);
+        return true;
+    }
+    return false;
+}
+
 void Config::Load(const std::string& path) {
+    m_loadedPath = path;
+    m_lastWriteTime = GetFileWriteTime(path);
+
     std::ifstream file(path);
     if (!file.is_open()) {
         AD_LOG_W("Config not found: %s — using defaults", path.c_str());

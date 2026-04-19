@@ -7,6 +7,7 @@ set(CORE_SOURCES
     scr/overlay_menu.cpp
     scr/guids.cpp
     scr/plugin_manager.cpp
+    scr/shader_cache.cpp
 )
 
 if(ADRENA_ENABLE_SGSR2)

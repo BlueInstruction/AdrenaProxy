@@ -435,4 +435,52 @@ bool SGSR1Pass::CreateIntermediate()
     return true;
 }
 
+// ══════════════════════════════════════════════════════════════
+//  ReloadShader — hot-reload compute shader from source
+// ══════════════════════════════════════════════════════════════
+
+bool SGSR1Pass::ReloadShader(const char* hlslSource, uint32_t sourceLen)
+{
+    if (!m_initialized || !m_device || !m_rootSig) return false;
+    if (!hlslSource || sourceLen == 0) return false;
+
+    ID3DBlob* csBlob  = nullptr;
+    ID3DBlob* errBlob = nullptr;
+    HRESULT hr = D3DCompile(
+        hlslSource, sourceLen,
+        "sgsr1_official.hlsl",
+        nullptr, nullptr,
+        "CS_main", "cs_5_0",
+        D3DCOMPILE_ENABLE_STRICTNESS, 0,
+        &csBlob, &errBlob);
+
+    if (FAILED(hr)) {
+        AD_LOG_E("SGSR1 ReloadShader compile failed: %s",
+                 errBlob ? (const char*)errBlob->GetBufferPointer() : "unknown");
+        if (csBlob)  csBlob->Release();
+        if (errBlob) errBlob->Release();
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc{};
+    psoDesc.pRootSignature = m_rootSig;
+    psoDesc.CS             = { csBlob->GetBufferPointer(), csBlob->GetBufferSize() };
+    psoDesc.NodeMask       = 0;
+
+    ID3D12PipelineState* newPso = nullptr;
+    hr = m_device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&newPso));
+    csBlob->Release();
+
+    if (FAILED(hr)) {
+        AD_LOG_E("SGSR1 ReloadShader CreatePSO failed: 0x%08X", hr);
+        return false;
+    }
+
+    // Swap — old PSO released, new one takes over.
+    if (m_pso) m_pso->Release();
+    m_pso = newPso;
+    AD_LOG_I("SGSR1Pass shader hot-reloaded successfully");
+    return true;
+}
+
 } // namespace adrena

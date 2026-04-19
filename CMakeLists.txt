@@ -55,18 +55,8 @@ add_subdirectory(dlss_proxy)
 add_subdirectory(dxgi_proxy)
 add_subdirectory(version_proxy)
 
-# ── Plugin helper ──────────────────────────────────────────────────────────
-function(add_adrena_plugin TARGET SRC)
-    add_library(${TARGET} SHARED ${SRC})
-    target_include_directories(${TARGET} PRIVATE
-        ${CMAKE_SOURCE_DIR}/adrena_core/include
-    )
-    set_target_properties(${TARGET} PROPERTIES
-        OUTPUT_NAME "${TARGET}"
-        SUFFIX      ".adrena.dll"
-        PREFIX      ""
-    )
-    target_compile_features(${TARGET} PRIVATE cxx_std_17)
-endfunction()
+# ── Plugins (example, FSR2, XeSS — optional SDK-gated) ─────────────────────
+add_subdirectory(plugins)
 
-add_adrena_plugin(plugin_example plugins/example/example_plugin.cpp)
+# ── Standalone Config GUI (ImGui + DX11 desktop app) ───────────────────────
+add_subdirectory(config_gui)
