@@ -60,6 +60,34 @@ namespace adrena {
 OverlayMenu::~OverlayMenu() { Shutdown(); }
 
 // ────────────────────────────────────────────────────────
+// Double-tap detection for HUD layout toggle
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::OnToggleKey() {
+#ifdef ADRENA_OVERLAY_ENABLED
+    float now = (float)GetTickCount64() / 1000.0f;
+    float dt  = now - m_lastToggleTime;
+    m_lastToggleTime = now;
+
+    if (dt < 0.35f && dt > 0.02f) {
+        // Double-tap detected — toggle HUD layout instead of menu
+        SharedState* ss = GetSharedState();
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            ss->hud_horizontal = !ss->hud_horizontal;
+        }
+        AD_LOG_I("HUD layout toggled to %s",
+                 (ss && ss->hud_horizontal) ? "horizontal" : "vertical");
+    } else {
+        // Single tap — toggle menu visibility
+        m_visible = !m_visible;
+    }
+#else
+    m_visible = !m_visible;
+#endif
+}
+
+// ────────────────────────────────────────────────────────
 // Win32 Init — context + font + theme
 // ────────────────────────────────────────────────────────
 
@@ -392,15 +420,24 @@ void OverlayMenu::DrawPageSGSR() {
     SectionHeader("RENDER RESOLUTION");
 
     const char* presets[] = {
-        "Native  100%%", "Ultra Quality  77%%", "Quality  67%%",
-        "Balanced  59%%", "Performance  50%%", "Ultra Perf  33%%", "Custom..."
+        "Native  100%%",
+        "1440x810  (56%%)",
+        "1280x720  (50%%)",
+        "Ultra Quality  77%%",
+        "Quality  67%%",
+        "Balanced  59%%",
+        "Performance  50%%",
+        "960x540  (37%%)",
+        "854x480  (33%%)",
+        "Ultra Perf  33%%",
+        "Custom..."
     };
-    const float pscales[] = { 1.0f, 0.77f, 0.67f, 0.59f, 0.50f, 0.33f, 0.0f };
-    static int presetIdx = 6;
+    const float pscales[] = { 1.0f, 0.5625f, 0.50f, 0.77f, 0.67f, 0.59f, 0.50f, 0.375f, 0.333f, 0.33f, 0.0f };
+    static int presetIdx = 10;
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##res", &presetIdx, presets, 7)) {
-        if (presetIdx < 6) { cfg.custom_scale = pscales[presetIdx]; cfg.ApplyRenderScale(); }
-        if (ss && presetIdx < 6) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+    if (ImGui::Combo("##res", &presetIdx, presets, 11)) {
+        if (presetIdx < 10) { cfg.custom_scale = pscales[presetIdx]; cfg.ApplyRenderScale(); }
+        if (ss && presetIdx < 10) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
     }
 
     float scale = cfg.GetRenderScale();
@@ -506,8 +543,19 @@ void OverlayMenu::DrawPageDisplay() {
     SectionHeader("KEY BINDINGS");
     ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_MID);
     ImGui::BulletText("HOME               Toggle menu");
+    ImGui::BulletText("HOME x2 (fast)     Switch HUD layout");
     ImGui::BulletText("All changes        Apply instantly");
     ImGui::PopStyleColor();
+
+    SectionHeader("HUD LAYOUT");
+    {
+        SharedState* hss = GetSharedState();
+        bool isHoriz = true;
+        if (hss) { SharedStateLock l(&hss->lock); isHoriz = hss->hud_horizontal; }
+        ImGui::TextColored(isHoriz ? COL_CYAN : COL_AMBER,
+            "Current: %s", isHoriz ? "Horizontal Bar" : "Vertical Stack");
+        ImGui::TextDisabled("Double-press HOME to switch");
+    }
 #endif
 }
 
@@ -750,8 +798,22 @@ void OverlayMenu::RenderHUD(int width, int height) {
     else if (s_ft <= 33.3f) ftCol = COL_YELLOW;
     else                     ftCol = COL_RED;
 
+    // ── Check HUD layout preference ──
+    bool hudHoriz = true;
+    {
+        SharedState* hss = GetSharedState();
+        if (hss) { SharedStateLock l(&hss->lock); hudHoriz = hss->hud_horizontal; }
+    }
+
     // ── HUD window — pinned top-left, no decorations ──
     if (!cfg.fps_display) goto startup_notif;
+
+    // Dispatch to vertical HUD if toggled
+    if (!hudHoriz) {
+        RenderHUDVertical((int)ImGui::GetIO().DisplaySize.x,
+                          (int)ImGui::GetIO().DisplaySize.y);
+        goto startup_notif;
+    }
 
     ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
     ImGui::SetNextWindowBgAlpha(0.0f);
@@ -962,6 +1024,113 @@ startup_notif:
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// RenderHUDVertical — stacked vertical FPS/stats panel
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::RenderHUDVertical(int width, int height) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg = GetConfig();
+    if (!cfg.fps_display && !m_visible) return;
+
+    // ── Throttled metrics (shared with horizontal HUD via statics) ──
+    float fps = ImGui::GetIO().Framerate;
+    float ft  = (fps > 0.0f) ? (1000.0f / fps) : 0.0f;
+
+    ImVec4 fpsCol;
+    if      (fps >= 60.0f) fpsCol = COL_GREEN;
+    else if (fps >= 30.0f) fpsCol = COL_YELLOW;
+    else                    fpsCol = COL_RED;
+
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.08f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.30f));
+
+    if (ImGui::Begin("##HUDv", nullptr,
+            ImGuiWindowFlags_NoDecoration      |
+            ImGuiWindowFlags_NoInputs           |
+            ImGuiWindowFlags_AlwaysAutoResize   |
+            ImGuiWindowFlags_NoSavedSettings    |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav)) {
+
+        // Title
+        ImGui::TextColored(COL_ORANGE, "ADRENAPROXY");
+        ImGui::Separator();
+
+        // FPS
+        ImGui::TextColored(COL_TEXT_LO, "FPS");
+        ImGui::SameLine(70);
+        ImGui::TextColored(fpsCol, "%.0f", fps);
+
+        // Frame time
+        ImGui::TextColored(COL_TEXT_LO, "FTIME");
+        ImGui::SameLine(70);
+        ImVec4 ftCol = (ft <= 16.7f) ? COL_GREEN : (ft <= 33.3f) ? COL_YELLOW : COL_RED;
+        ImGui::TextColored(ftCol, "%.1f ms", ft);
+
+        // SGSR status
+        SharedState* ss = GetSharedState();
+        ImGui::TextColored(COL_TEXT_LO, "SGSR");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->sgsr_active)
+                ImGui::TextColored(COL_GREEN, "DLSS %.0f%%", ss->render_scale * 100.0f);
+            else if (ss->sgsr_enabled)
+                ImGui::TextColored(COL_AMBER, "SHARP");
+            else
+                ImGui::TextColored(COL_TEXT_LO, "OFF");
+        } else {
+            ImGui::TextColored(COL_TEXT_LO, "OFF");
+        }
+
+        // FG
+        ImGui::TextColored(COL_TEXT_LO, "FG");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->fg_mode > 1)
+                ImGui::TextColored(COL_CYAN, "x%d", ss->fg_mode);
+            else
+                ImGui::TextColored(COL_TEXT_LO, "OFF");
+        } else {
+            ImGui::TextColored(COL_TEXT_LO, "OFF");
+        }
+
+        // GPU
+        ImGui::TextColored(COL_TEXT_LO, "GPU");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->is_adreno && ss->adreno_tier > 0)
+                ImGui::TextColored(COL_TEXT_HI, "A-%dxx", ss->adreno_tier * 100);
+            else
+                ImGui::TextColored(COL_TEXT_MID, "Adreno");
+        } else {
+            ImGui::TextColored(COL_TEXT_MID, "Unknown");
+        }
+
+        // RAM
+        MEMORYSTATUSEX m = {}; m.dwLength = sizeof(m);
+        if (GlobalMemoryStatusEx(&m)) {
+            float used  = (float)(m.ullTotalPhys - m.ullAvailPhys) / (1024*1024*1024.0f);
+            float total = (float)m.ullTotalPhys / (1024*1024*1024.0f);
+            ImGui::TextColored(COL_TEXT_LO, "RAM");
+            ImGui::SameLine(70);
+            ImGui::TextColored(COL_TEXT_HI, "%.1f/%.0fG", used, total);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
 #endif
 }
 
