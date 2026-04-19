@@ -9,9 +9,14 @@
 #include <windows.h>
 #include <d3d12.h>
 #include <cstdint>
+#include <mutex>
 
 static constexpr int NVNGX_SUCCESS = 0x1;
 static constexpr int NVNGX_FAIL    = 0x0;
+
+// ── Process-wide mutex guarding all proxy globals ──
+// Every exported entry point must hold this before touching g_* state.
+static std::mutex g_proxyMutex;
 
 static bool g_initialized = false;
 static void* g_device = nullptr;
@@ -27,27 +32,41 @@ static unsigned int g_lastRenderH  = 0;
 static unsigned int g_lastDisplayW = 0;
 static unsigned int g_lastDisplayH = 0;
 
+// Deferred one-shot flag — GPU detection + shared state init happens on
+// the first NVNGX_Init call instead of DllMain (avoids loader-lock hazard).
+static bool g_earlyInitDone = false;
+
 // ---------------------------------------------------------------
-// DLL Entry Point
+// Deferred early init — called from NVNGX_Init, NOT from DllMain.
+// DllMain runs under the Windows loader lock, where calling
+// CreateDXGIFactory2, OpenFileMappingA, fopen, etc. can deadlock.
+// ---------------------------------------------------------------
+static void EnsureEarlyInit() {
+    if (g_earlyInitDone) return;
+    g_earlyInitDone = true;
+
+    adrena::Logger::Instance().Init("adrena_proxy.log");
+    AD_LOG_I("adrenaproxy_sgsr.dll loaded (AdrenaProxy v2.0 — NVNGX Proxy)");
+
+    adrena::GPUInfo gpu = adrena::AutoDetectGPU();
+    adrena::SharedState* ss = adrena::GetSharedState();
+    if (ss) {
+        adrena::SharedStateLock lock(&ss->lock);
+        ss->is_adreno = gpu.isAdreno;
+        ss->adreno_tier = gpu.adrenoTier;
+    }
+}
+
+// ---------------------------------------------------------------
+// DLL Entry Point — kept trivial to avoid loader-lock hazards.
 // ---------------------------------------------------------------
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*lpReserved*/) {
     switch (reason) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hModule);
-        adrena::Logger::Instance().Init("adrena_proxy.log");
-        AD_LOG_I("adrenaproxy_sgsr.dll loaded (AdrenaProxy v2.0 — NVNGX Proxy)");
-        {
-            adrena::GPUInfo gpu = adrena::AutoDetectGPU();
-            adrena::SharedState* ss = adrena::GetSharedState();
-            if (ss) {
-                adrena::SharedStateLock lock(&ss->lock);
-                ss->is_adreno = gpu.isAdreno;
-                ss->adreno_tier = gpu.adrenoTier;
-            }
-        }
         break;
     case DLL_PROCESS_DETACH:
-        AD_LOG_I("adrenaproxy_sgsr.dll unloading");
+        // Logger may not have been initialized if NVNGX_Init was never called.
         adrena::Logger::Instance().Shutdown();
         break;
     }
@@ -61,6 +80,8 @@ extern "C" {
 
 __declspec(dllexport) int NVNGX_Init(unsigned long long appId, void* device,
                                      void* instance, const void* /*features*/) {
+    std::lock_guard<std::mutex> guard(g_proxyMutex);
+    EnsureEarlyInit();
     AD_LOG_I("NVNGX_Init: appId=%llu device=%p instance=%p", appId, device, instance);
     if (g_initialized) return NVNGX_SUCCESS;
     if (!device) { AD_LOG_E("NVNGX_Init: null device"); return NVNGX_FAIL; }
@@ -81,6 +102,7 @@ __declspec(dllexport) int NVNGX_Init(unsigned long long appId, void* device,
 }
 
 __declspec(dllexport) int NVNGX_Shutdown() {
+    std::lock_guard<std::mutex> guard(g_proxyMutex);
     AD_LOG_I("NVNGX_Shutdown called");
     if (g_initialized) {
         g_sgsr.Shutdown();
@@ -97,6 +119,7 @@ __declspec(dllexport) int NVNGX_Shutdown() {
 }
 
 __declspec(dllexport) int NVNGX_GetParameters(void** outParams) {
+    std::lock_guard<std::mutex> guard(g_proxyMutex);
     AD_LOG_I("NVNGX_GetParameters called");
     if (!outParams) return NVNGX_FAIL;
     if (!g_params) g_params = new adrena::NGXParameter();
@@ -110,6 +133,7 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
     int perfQuality,
     unsigned int* outRenderW, unsigned int* outRenderH,
     float* outSharpness) {
+    std::lock_guard<std::mutex> guard(g_proxyMutex);
     AD_LOG_I("DLSS_GetOptimalSettings: target=%ux%u quality=%d", targetW, targetH, perfQuality);
 
     if (!outRenderW || !outRenderH || !outSharpness) return NVNGX_FAIL;
@@ -142,19 +166,31 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
         ID3D12Device* d3dDevice = static_cast<ID3D12Device*>(g_device);
         if (cfg.sgsr_mode == adrena::SGSRMode::SGSR2) {
             if (!g_sgsr2.IsInitialized()) {
-                g_sgsr2.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
-                             *outRenderW, *outRenderH, targetW, targetH);
+                if (!g_sgsr2.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                  *outRenderW, *outRenderH, targetW, targetH)) {
+                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR2 Init failed");
+                    return NVNGX_FAIL;
+                }
                 g_historyValid = false;
             } else if (dimsChanged) {
-                g_sgsr2.Resize(*outRenderW, *outRenderH, targetW, targetH);
+                if (!g_sgsr2.Resize(*outRenderW, *outRenderH, targetW, targetH)) {
+                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR2 Resize failed");
+                    return NVNGX_FAIL;
+                }
                 g_historyValid = false;
             }
         } else if (cfg.sgsr_mode == adrena::SGSRMode::SGSR1) {
             if (!g_sgsr.IsInitialized()) {
-                g_sgsr.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
-                            *outRenderW, *outRenderH, targetW, targetH);
+                if (!g_sgsr.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
+                                 *outRenderW, *outRenderH, targetW, targetH)) {
+                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR1 Init failed");
+                    return NVNGX_FAIL;
+                }
             } else if (dimsChanged) {
-                g_sgsr.Resize(*outRenderW, *outRenderH, targetW, targetH);
+                if (!g_sgsr.Resize(*outRenderW, *outRenderH, targetW, targetH)) {
+                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR1 Resize failed");
+                    return NVNGX_FAIL;
+                }
             }
         }
     }
@@ -185,6 +221,7 @@ __declspec(dllexport) int DLSS_Evaluate(
     void* /*nvngxInstance*/,
     void* cmdList,
     void* params) {
+    std::lock_guard<std::mutex> guard(g_proxyMutex);
     if (!g_initialized || !cmdList || !params) return NVNGX_FAIL;
 
     adrena::NGXParameter* p = static_cast<adrena::NGXParameter*>(params);
@@ -215,9 +252,10 @@ __declspec(dllexport) int DLSS_Evaluate(
     p->GetValueUI32("Render.Subrect.Width", &renderW);
     p->GetValueUI32("Render.Subrect.Height", &renderH);
 
+    // Read shared state — correct renderW/renderH first, THEN derive display dims.
     adrena::SharedState* ss = adrena::GetSharedState();
-    uint32_t displayW = renderW;
-    uint32_t displayH = renderH;
+    uint32_t displayW = 0;
+    uint32_t displayH = 0;
     if (ss) {
         adrena::SharedStateLock lock(&ss->lock);
         if (renderW == 0) renderW = ss->render_width;
@@ -225,6 +263,15 @@ __declspec(dllexport) int DLSS_Evaluate(
         displayW = ss->display_width;
         displayH = ss->display_height;
         sharpness = ss->sharpness;
+    }
+    // Fallback if shared state was unavailable or had zero values.
+    if (displayW == 0) displayW = renderW;
+    if (displayH == 0) displayH = renderH;
+
+    // Reject zero render dimensions — SGSR passes divide by these.
+    if (renderW == 0 || renderH == 0) {
+        AD_LOG_E("DLSS_Evaluate: zero render dimensions (%ux%u), skipping", renderW, renderH);
+        return NVNGX_FAIL;
     }
 
     AD_LOG_I("DLSS_Evaluate: color=%p depth=%p motion=%p output=%p render=%ux%u sharp=%.2f",

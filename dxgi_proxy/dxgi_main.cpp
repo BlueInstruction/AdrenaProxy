@@ -9,6 +9,7 @@
 #include "proxy_factory.h"
 
 static HMODULE g_realDXGI = nullptr;
+static bool    g_dxgiEarlyInitDone = false;
 
 static bool LoadRealDXGI() {
     if (g_realDXGI) return true;
@@ -31,30 +32,43 @@ F GetRealProc(const char* name) {
     return reinterpret_cast<F>(GetProcAddress(g_realDXGI, name));
 }
 
+// ---------------------------------------------------------------
+// Deferred early init — called from the first CreateDXGIFactory*
+// call instead of DllMain, to avoid loader-lock hazards from
+// CreateDXGIFactory2, OpenFileMappingA, fopen, etc.
+// ---------------------------------------------------------------
+static void EnsureDxgiEarlyInit() {
+    if (g_dxgiEarlyInitDone) return;
+    g_dxgiEarlyInitDone = true;
+
+    adrena::Logger::Instance().Init("adrena_proxy.log");
+    AD_LOG_I("adrenaproxy_dxgi.dll loaded (AdrenaProxy v2.0 — DXGI Proxy)");
+    LoadRealDXGI();
+
+    adrena::Config& cfg = adrena::GetConfig();
+    AD_LOG_I("Config: SGSR=%d Quality=%d Scale=%.2f FG=%d",
+             cfg.enabled, (int)cfg.quality, cfg.render_scale, (int)cfg.fg_mode);
+
+    adrena::GPUInfo gpu = adrena::AutoDetectGPU();
+    adrena::SharedState* ss = adrena::GetSharedState();
+    if (ss) {
+        adrena::SharedStateLock l(&ss->lock);
+        ss->is_adreno = gpu.isAdreno;
+        ss->adreno_tier = gpu.adrenoTier;
+        ss->display_width = cfg.display_width;
+        ss->display_height = cfg.display_height;
+    }
+}
+
+// ---------------------------------------------------------------
+// DLL Entry Point — kept trivial to avoid loader-lock hazards.
+// ---------------------------------------------------------------
 BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
     switch (reason) {
     case DLL_PROCESS_ATTACH:
         DisableThreadLibraryCalls(hModule);
-        adrena::Logger::Instance().Init("adrena_proxy.log");
-        AD_LOG_I("adrenaproxy_dxgi.dll loaded (AdrenaProxy v2.0 — DXGI Proxy)");
-        LoadRealDXGI();
-        {
-            adrena::Config& cfg = adrena::GetConfig();
-            AD_LOG_I("Config: SGSR=%d Quality=%d Scale=%.2f FG=%d",
-                     cfg.enabled, (int)cfg.quality, cfg.render_scale, (int)cfg.fg_mode);
-            adrena::GPUInfo gpu = adrena::AutoDetectGPU();
-            adrena::SharedState* ss = adrena::GetSharedState();
-            if (ss) {
-                adrena::SharedStateLock l(&ss->lock);
-                ss->is_adreno = gpu.isAdreno;
-                ss->adreno_tier = gpu.adrenoTier;
-                ss->display_width = cfg.display_width;
-                ss->display_height = cfg.display_height;
-            }
-        }
         break;
     case DLL_PROCESS_DETACH:
-        AD_LOG_I("adrenaproxy_dxgi.dll unloading");
         adrena::Logger::Instance().Shutdown();
         if (g_realDXGI) { FreeLibrary(g_realDXGI); g_realDXGI = nullptr; }
         break;
@@ -84,6 +98,7 @@ extern "C" {
 // Using dllexport would conflict with dxgi.h declarations on MSVC.
 
 HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory) {
+    EnsureDxgiEarlyInit();
     AD_LOG_I("CreateDXGIFactory called");
     auto fn = GetRealProc<PFN_CreateDXGIFactory>("CreateDXGIFactory");
     if (!fn) return E_FAIL;
@@ -93,6 +108,7 @@ HRESULT WINAPI CreateDXGIFactory(REFIID riid, void** ppFactory) {
 }
 
 HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory) {
+    EnsureDxgiEarlyInit();
     AD_LOG_I("CreateDXGIFactory1 called");
     auto fn = GetRealProc<PFN_CreateDXGIFactory1>("CreateDXGIFactory1");
     if (!fn) return E_FAIL;
@@ -102,6 +118,7 @@ HRESULT WINAPI CreateDXGIFactory1(REFIID riid, void** ppFactory) {
 }
 
 HRESULT WINAPI CreateDXGIFactory2(UINT Flags, REFIID riid, void** ppFactory) {
+    EnsureDxgiEarlyInit();
     AD_LOG_I("CreateDXGIFactory2 called: Flags=0x%X", Flags);
     auto fn = GetRealProc<PFN_CreateDXGIFactory2>("CreateDXGIFactory2");
     if (!fn) return E_FAIL;
