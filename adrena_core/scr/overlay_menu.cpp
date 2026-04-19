@@ -397,8 +397,30 @@ void OverlayMenu::DrawPageSGSR() {
 
     ImGui::Dummy(ImVec2(0, 2));
 
-    // ── Mode ──
-    SectionHeader("UPSCALING MODE");
+    // ── Active Upscaler Plugin ──
+    SectionHeader("ACTIVE UPSCALER");
+    {
+        // Maps to plugin IDs: sgsr1, sgsr2, fsr2, xess
+        const char* plugins[] = { "SGSR1 (Spatial)", "SGSR2 (Temporal)", "FSR2 (AMD)", "XeSS (Intel)" };
+        // Index: 0=sgsr1, 1=sgsr2, 2=fsr2, 3=xess
+        static int pluginIdx = (cfg.sgsr_mode == SGSRMode::SGSR2) ? 1 : 0;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##plugin", &pluginIdx, plugins, 4)) {
+            switch (pluginIdx) {
+            case 0: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break;
+            case 1: cfg.sgsr_mode = SGSRMode::SGSR2; cfg.enabled = true; break;
+            case 2: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break; // FSR2 — routed via plugin
+            case 3: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break; // XeSS — routed via plugin
+            }
+            if (ss) { SharedStateLock l(&ss->lock); ss->sgsr_enabled = cfg.enabled; }
+        }
+        if (pluginIdx >= 2) {
+            ImGui::TextColored(COL_AMBER, "Requires plugin DLL in plugins/ folder");
+        }
+    }
+
+    // ── SGSR Mode ──
+    SectionHeader("SGSR MODE");
 
     const char* modes[] = { "Off", "SGSR1 — Spatial", "SGSR2 — Temporal" };
     int mode = cfg.enabled ? (int)cfg.sgsr_mode : 0;
@@ -410,10 +432,7 @@ void OverlayMenu::DrawPageSGSR() {
     }
 
     if (cfg.sgsr_mode == SGSRMode::SGSR2) {
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_AMBER);
-        ImGui::TextWrapped("! SGSR2 requires depth + motion vectors (DLSS games only)");
-        ImGui::PopStyleColor();
+        ImGui::TextColored(COL_AMBER, "SGSR2 needs depth + motion (DLSS games)");
     }
 
     // ── Resolution ──
@@ -443,7 +462,7 @@ void OverlayMenu::DrawPageSGSR() {
     float scale = cfg.GetRenderScale();
     ImGui::SetNextItemWidth(-1);
     if (ImGui::SliderFloat("##scale", &scale, 0.25f, 1.0f, "Scale  %.0f%%")) {
-        cfg.custom_scale = scale; cfg.ApplyRenderScale(); presetIdx = 6;
+        cfg.custom_scale = scale; cfg.ApplyRenderScale(); presetIdx = 10;
         if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
     }
 
@@ -632,118 +651,32 @@ void OverlayMenu::DrawPageAdvanced() {
 
 void OverlayMenu::BuildUI() {
 #ifdef ADRENA_OVERLAY_ENABLED
-    const float WIN_W = 500.0f;
-    const float WIN_H = 360.0f;
-    const float NAV_W = 122.0f;
+    // ── Classic lightweight tab menu — minimal GPU/CPU overhead ──
+    ImGui::SetNextWindowSize(ImVec2(420, 340), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.94f);
 
-    ImGui::SetNextWindowSize(ImVec2(WIN_W, WIN_H), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(1.0f);
-
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.25f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
 
-    ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                          ImGuiWindowFlags_NoCollapse;
-    if (!ImGui::Begin("##AdrenaMain", &m_visible, wf)) {
-        ImGui::End(); ImGui::PopStyleColor(); ImGui::PopStyleVar(); return;
+    if (!ImGui::Begin("AdrenaProxy v2.0", &m_visible, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+        return;
     }
 
-    // ── Top header bar ──
-    {
-        ImDrawList* dl  = ImGui::GetWindowDrawList();
-        ImVec2 wpos     = ImGui::GetWindowPos();
-        ImVec2 wsize    = ImGui::GetWindowSize();
-        // thin orange top line
-        dl->AddRectFilled(
-            ImVec2(wpos.x, wpos.y),
-            ImVec2(wpos.x + wsize.x, wpos.y + 2),
-            ImGui::ColorConvertFloat4ToU32(COL_ORANGE));
+    ImGui::Separator();
 
-        ImGui::SetCursorPos(ImVec2(14, 10));
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_ORANGE);
-        ImGui::Text("ADRENA");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0, 0);
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_HI);
-        ImGui::Text("PROXY");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0, 8);
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
-        ImGui::Text("v2.0");
-        ImGui::PopStyleColor();
-
-        // right-align GPU tier badge
-        SharedState* ss = GetSharedState();
-        if (ss) {
-            SharedStateLock l(&ss->lock);
-            if (ss->is_adreno && ss->adreno_tier > 0) {
-                char badge[32];
-                snprintf(badge, sizeof(badge), "Adreno %dxx", ss->adreno_tier);
-                float bw = ImGui::CalcTextSize(badge).x + 16;
-                ImGui::SameLine(wsize.x - bw - 14);
-                ImGui::TextColored(COL_GREEN, "%s", badge);
-            }
-        }
-        ImGui::SetCursorPosY(34);
-        dl->AddLine(
-            ImVec2(wpos.x, wpos.y + 34),
-            ImVec2(wpos.x + wsize.x, wpos.y + 34),
-            ImGui::ColorConvertFloat4ToU32(COL_SEP));
+    if (ImGui::BeginTabBar("##MainTabs")) {
+        if (ImGui::BeginTabItem("SGSR"))      { DrawPageSGSR();     ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Frame Gen"))  { DrawPageFrameGen(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Display"))    { DrawPageDisplay();  ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Advanced"))   { DrawPageAdvanced(); ImGui::EndTabItem(); }
+        ImGui::EndTabBar();
     }
-
-    // ── Left nav panel ──
-    ImGui::SetCursorPos(ImVec2(0, 36));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_MID);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 6));
-    ImGui::BeginChild("##nav", ImVec2(NAV_W, WIN_H - 36), false, ImGuiWindowFlags_NoScrollbar);
-
-    DrawNavItem("~", "SGSR",      0);
-    DrawNavItem(">>","FRAME GEN", 1);
-    DrawNavItem("[]","DISPLAY",   2);
-    DrawNavItem("/\\","ADVANCED", 3);
-
-    // Version footer inside nav
-    float navH = ImGui::GetWindowHeight();
-    ImGui::SetCursorPosY(navH - 22);
-    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
-    ImGui::SetCursorPosX(8);
-    ImGui::Text("BlueInstruction");
-    ImGui::PopStyleColor();
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-
-    // ── Vertical divider ──
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 wp      = ImGui::GetWindowPos();
-        dl->AddLine(
-            ImVec2(wp.x + NAV_W, wp.y + 36),
-            ImVec2(wp.x + NAV_W, wp.y + WIN_H),
-            ImGui::ColorConvertFloat4ToU32(COL_SEP));
-    }
-
-    // ── Content panel ──
-    ImGui::SetCursorPos(ImVec2(NAV_W + 1, 36));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_DEEP);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
-    ImGui::BeginChild("##content", ImVec2(WIN_W - NAV_W - 1, WIN_H - 36), false);
-
-    switch (m_navPage) {
-        case 0: DrawPageSGSR();     break;
-        case 1: DrawPageFrameGen(); break;
-        case 2: DrawPageDisplay();  break;
-        case 3: DrawPageAdvanced(); break;
-    }
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
 
     ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(3);
 #endif
 }
 
