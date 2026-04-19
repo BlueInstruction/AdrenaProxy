@@ -400,7 +400,7 @@ LRESULT CALLBACK ProxySwapChain::StaticWndProc(HWND hwnd, UINT msg, WPARAM wp, L
     if (msg == WM_KEYDOWN) {
         Config& cfg = GetConfig();
         if (wp == (WPARAM)cfg.toggle_key && s_instance && s_instance->m_overlay) {
-            s_instance->m_overlay->Toggle();
+            s_instance->m_overlay->OnToggleKey();
             return 0;
         }
     }
