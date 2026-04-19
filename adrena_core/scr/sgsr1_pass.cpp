@@ -5,21 +5,23 @@
 
 namespace adrena {
 
-// ── MinGW-compatible barrier helper ──
-struct ResourceBarrier : D3D12_RESOURCE_BARRIER {
-    static ResourceBarrier Transition(ID3D12Resource* res,
-        D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
-        UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
-    {
-        ResourceBarrier b{};
-        b.Type                    = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource   = res;
-        b.Transition.StateBefore = before;
-        b.Transition.StateAfter  = after;
-        b.Transition.Subresource = sub;
-        return b;
-    }
-};
+// ── Transition barrier helper (compatible with MSVC and MinGW) ──
+// Using a free function returning D3D12_RESOURCE_BARRIER directly avoids
+// MSVC's rejection of accessing anonymous-union members through an
+// inherited struct (error C2228 on b.Transition.pResource).
+static inline D3D12_RESOURCE_BARRIER MakeTransitionBarrier(
+    ID3D12Resource* res,
+    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
+    UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+{
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = res;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter  = after;
+    b.Transition.Subresource = sub;
+    return b;
+}
 
 // ══════════════════════════════════════════════════════════════
 //  Lifetime
@@ -202,7 +204,7 @@ void SGSR1Pass::Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                            D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
     if (before == after) return;
-    auto b = ResourceBarrier::Transition(res, before, after);
+    auto b = MakeTransitionBarrier(res, before, after);
     cl->ResourceBarrier(1, &b);
 }
 
@@ -413,16 +415,15 @@ bool SGSR1Pass::CreateIntermediate()
     D3D12_HEAP_PROPERTIES defaultHeap{};
     defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-    D3D12_CLEAR_VALUE clearVal{};
-    clearVal.Format = m_format;
-    memset(clearVal.Color, 0, sizeof(clearVal.Color));
-
+    // pOptimizedClearValue must be nullptr for textures without
+    // ALLOW_RENDER_TARGET or ALLOW_DEPTH_STENCIL flags; passing a non-null
+    // value causes CreateCommittedResource to return E_INVALIDARG.
     hr = m_device->CreateCommittedResource(
         &defaultHeap,
         D3D12_HEAP_FLAG_NONE,
         &texDesc,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-        &clearVal,
+        nullptr,
         IID_PPV_ARGS(&m_intermediate));
 
     if (FAILED(hr)) {
@@ -431,6 +432,54 @@ bool SGSR1Pass::CreateIntermediate()
     }
 
     AD_LOG_I("SGSR1Pass intermediate created (%ux%u)", m_renderW, m_renderH);
+    return true;
+}
+
+// ══════════════════════════════════════════════════════════════
+//  ReloadShader — hot-reload compute shader from source
+// ══════════════════════════════════════════════════════════════
+
+bool SGSR1Pass::ReloadShader(const char* hlslSource, uint32_t sourceLen)
+{
+    if (!m_initialized || !m_device || !m_rootSig) return false;
+    if (!hlslSource || sourceLen == 0) return false;
+
+    ID3DBlob* csBlob  = nullptr;
+    ID3DBlob* errBlob = nullptr;
+    HRESULT hr = D3DCompile(
+        hlslSource, sourceLen,
+        "sgsr1_official.hlsl",
+        nullptr, nullptr,
+        "CS_main", "cs_5_0",
+        D3DCOMPILE_ENABLE_STRICTNESS, 0,
+        &csBlob, &errBlob);
+
+    if (FAILED(hr)) {
+        AD_LOG_E("SGSR1 ReloadShader compile failed: %s",
+                 errBlob ? (const char*)errBlob->GetBufferPointer() : "unknown");
+        if (csBlob)  csBlob->Release();
+        if (errBlob) errBlob->Release();
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc{};
+    psoDesc.pRootSignature = m_rootSig;
+    psoDesc.CS             = { csBlob->GetBufferPointer(), csBlob->GetBufferSize() };
+    psoDesc.NodeMask       = 0;
+
+    ID3D12PipelineState* newPso = nullptr;
+    hr = m_device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&newPso));
+    csBlob->Release();
+
+    if (FAILED(hr)) {
+        AD_LOG_E("SGSR1 ReloadShader CreatePSO failed: 0x%08X", hr);
+        return false;
+    }
+
+    // Swap — old PSO released, new one takes over.
+    if (m_pso) m_pso->Release();
+    m_pso = newPso;
+    AD_LOG_I("SGSR1Pass shader hot-reloaded successfully");
     return true;
 }
 

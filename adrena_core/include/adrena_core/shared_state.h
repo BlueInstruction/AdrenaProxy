@@ -29,7 +29,9 @@ struct SharedState {
     bool     is_adreno       = false;
     int32_t  adreno_tier     = 0;
 
-    uint32_t reserved[16]    = {};
+    bool     hud_horizontal  = true;   // true = bar, false = vertical
+
+    uint32_t reserved[15]    = {};
 };
 
 SharedState* GetSharedState();

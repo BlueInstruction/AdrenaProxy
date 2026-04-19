@@ -9,7 +9,7 @@
 #ifdef ADRENA_DX12_OVERLAY
 #include <imgui_impl_dx12.h>
 #endif
-#include "adrena_core/Hack.h"
+#include "adrena_core/hack.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
@@ -58,6 +58,17 @@ namespace adrena {
 // ────────────────────────────────────────────────────────
 
 OverlayMenu::~OverlayMenu() { Shutdown(); }
+
+// ────────────────────────────────────────────────────────
+// Double-tap detection for HUD layout toggle
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::OnToggleKey() {
+    // HOME key = toggle menu visibility only.
+    // HUD layout is changed via the Display settings combo.
+    m_visible = !m_visible;
+    AD_LOG_I("Menu toggled: %s", m_visible ? "visible" : "hidden");
+}
 
 // ────────────────────────────────────────────────────────
 // Win32 Init — context + font + theme
@@ -369,8 +380,30 @@ void OverlayMenu::DrawPageSGSR() {
 
     ImGui::Dummy(ImVec2(0, 2));
 
-    // ── Mode ──
-    SectionHeader("UPSCALING MODE");
+    // ── Active Upscaler Plugin ──
+    SectionHeader("ACTIVE UPSCALER");
+    {
+        // Maps to plugin IDs: sgsr1, sgsr2, fsr2, xess
+        const char* plugins[] = { "SGSR1 (Spatial)", "SGSR2 (Temporal)", "FSR2 (AMD)", "XeSS (Intel)" };
+        // Index: 0=sgsr1, 1=sgsr2, 2=fsr2, 3=xess
+        static int pluginIdx = (cfg.sgsr_mode == SGSRMode::SGSR2) ? 1 : 0;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##plugin", &pluginIdx, plugins, 4)) {
+            switch (pluginIdx) {
+            case 0: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break;
+            case 1: cfg.sgsr_mode = SGSRMode::SGSR2; cfg.enabled = true; break;
+            case 2: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break; // FSR2 — routed via plugin
+            case 3: cfg.sgsr_mode = SGSRMode::SGSR1; cfg.enabled = true; break; // XeSS — routed via plugin
+            }
+            if (ss) { SharedStateLock l(&ss->lock); ss->sgsr_enabled = cfg.enabled; }
+        }
+        if (pluginIdx >= 2) {
+            ImGui::TextColored(COL_AMBER, "Requires plugin DLL in plugins/ folder");
+        }
+    }
+
+    // ── SGSR Mode ──
+    SectionHeader("SGSR MODE");
 
     const char* modes[] = { "Off", "SGSR1 — Spatial", "SGSR2 — Temporal" };
     int mode = cfg.enabled ? (int)cfg.sgsr_mode : 0;
@@ -382,33 +415,78 @@ void OverlayMenu::DrawPageSGSR() {
     }
 
     if (cfg.sgsr_mode == SGSRMode::SGSR2) {
-        ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_AMBER);
-        ImGui::TextWrapped("! SGSR2 requires depth + motion vectors (DLSS games only)");
-        ImGui::PopStyleColor();
+        ImGui::TextColored(COL_AMBER, "SGSR2 needs depth + motion (DLSS games)");
+    }
+
+    // ── Quality Preset ──
+    SectionHeader("QUALITY PRESET");
+    {
+        const char* qualities[] = {
+            "Ultra Quality  (77%%)",
+            "Quality  (67%%)",
+            "Balanced  (59%%)",
+            "Performance  (50%%)",
+            "Ultra Performance  (33%%)"
+        };
+        const float qscales[] = { 0.77f, 0.67f, 0.59f, 0.50f, 0.33f };
+        int qIdx = (int)cfg.quality;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##quality", &qIdx, qualities, 5)) {
+            cfg.quality = (Quality)qIdx;
+            cfg.custom_scale = qscales[qIdx];
+            cfg.ApplyRenderScale();
+            if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+        }
     }
 
     // ── Resolution ──
     SectionHeader("RENDER RESOLUTION");
-
-    const char* presets[] = {
-        "Native  100%%", "Ultra Quality  77%%", "Quality  67%%",
-        "Balanced  59%%", "Performance  50%%", "Ultra Perf  33%%", "Custom..."
-    };
-    const float pscales[] = { 1.0f, 0.77f, 0.67f, 0.59f, 0.50f, 0.33f, 0.0f };
-    static int presetIdx = 6;
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##res", &presetIdx, presets, 7)) {
-        if (presetIdx < 6) { cfg.custom_scale = pscales[presetIdx]; cfg.ApplyRenderScale(); }
-        if (ss && presetIdx < 6) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+    {
+        const char* resolutions[] = {
+            "Native",
+            "2560x1440",
+            "1920x1080",
+            "1600x900",
+            "1440x810",
+            "1366x768",
+            "1280x720",
+            "1152x648",
+            "1024x576",
+            "960x540",
+            "854x480",
+            "800x450",
+            "768x432",
+            "720x405",
+            "640x360",
+            "576x324",
+            "480x270",
+            "Custom..."
+        };
+        const float rscales[] = {
+            1.00f, 0.75f, 0.5625f, 0.469f, 0.5625f, 0.533f, 0.50f,
+            0.45f, 0.40f, 0.375f, 0.333f, 0.3125f, 0.30f, 0.281f,
+            0.25f, 0.225f, 0.1875f, 0.0f
+        };
+        static int resIdx = 17; // Custom
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##res", &resIdx, resolutions, 18)) {
+            if (resIdx < 17) {
+                cfg.custom_scale = rscales[resIdx];
+                cfg.ApplyRenderScale();
+                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+            }
+        }
     }
 
+    // ── Custom Scale Slider ──
+    SectionHeader("CUSTOM SCALE");
     float scale = cfg.GetRenderScale();
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##scale", &scale, 0.25f, 1.0f, "Scale  %.0f%%")) {
-        cfg.custom_scale = scale; cfg.ApplyRenderScale(); presetIdx = 6;
+    if (ImGui::SliderFloat("##scale", &scale, 0.10f, 1.0f, "%.0f%%")) {
+        cfg.custom_scale = scale; cfg.ApplyRenderScale();
         if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
     }
+    SmallLabel("Drag to set any render scale");
 
     // ── Sharpness ──
     SectionHeader("SHARPNESS");
@@ -508,6 +586,23 @@ void OverlayMenu::DrawPageDisplay() {
     ImGui::BulletText("HOME               Toggle menu");
     ImGui::BulletText("All changes        Apply instantly");
     ImGui::PopStyleColor();
+
+    SectionHeader("HUD ORIENTATION");
+    {
+        SharedState* hss = GetSharedState();
+        bool isHoriz = true;
+        if (hss) { SharedStateLock l(&hss->lock); isHoriz = hss->hud_horizontal; }
+        const char* orientations[] = { "Horizontal Bar", "Vertical Stack" };
+        int oriIdx = isHoriz ? 0 : 1;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##hudori", &oriIdx, orientations, 2)) {
+            if (hss) {
+                SharedStateLock l(&hss->lock);
+                hss->hud_horizontal = (oriIdx == 0);
+            }
+            AD_LOG_I("HUD orientation changed to %s", orientations[oriIdx]);
+        }
+    }
 #endif
 }
 
@@ -584,118 +679,32 @@ void OverlayMenu::DrawPageAdvanced() {
 
 void OverlayMenu::BuildUI() {
 #ifdef ADRENA_OVERLAY_ENABLED
-    const float WIN_W = 500.0f;
-    const float WIN_H = 360.0f;
-    const float NAV_W = 122.0f;
+    // ── Classic lightweight tab menu — minimal GPU/CPU overhead ──
+    ImGui::SetNextWindowSize(ImVec2(420, 340), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.94f);
 
-    ImGui::SetNextWindowSize(ImVec2(WIN_W, WIN_H), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowBgAlpha(1.0f);
-
-    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.25f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
 
-    ImGuiWindowFlags wf = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
-                          ImGuiWindowFlags_NoCollapse;
-    if (!ImGui::Begin("##AdrenaMain", &m_visible, wf)) {
-        ImGui::End(); ImGui::PopStyleColor(); ImGui::PopStyleVar(); return;
+    if (!ImGui::Begin("AdrenaProxy v2.0", &m_visible, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::End();
+        ImGui::PopStyleVar(3);
+        return;
     }
 
-    // ── Top header bar ──
-    {
-        ImDrawList* dl  = ImGui::GetWindowDrawList();
-        ImVec2 wpos     = ImGui::GetWindowPos();
-        ImVec2 wsize    = ImGui::GetWindowSize();
-        // thin orange top line
-        dl->AddRectFilled(
-            ImVec2(wpos.x, wpos.y),
-            ImVec2(wpos.x + wsize.x, wpos.y + 2),
-            ImGui::ColorConvertFloat4ToU32(COL_ORANGE));
+    ImGui::Separator();
 
-        ImGui::SetCursorPos(ImVec2(14, 10));
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_ORANGE);
-        ImGui::Text("ADRENA");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0, 0);
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_HI);
-        ImGui::Text("PROXY");
-        ImGui::PopStyleColor();
-        ImGui::SameLine(0, 8);
-        ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
-        ImGui::Text("v2.0");
-        ImGui::PopStyleColor();
-
-        // right-align GPU tier badge
-        SharedState* ss = GetSharedState();
-        if (ss) {
-            SharedStateLock l(&ss->lock);
-            if (ss->is_adreno && ss->adreno_tier > 0) {
-                char badge[32];
-                snprintf(badge, sizeof(badge), "Adreno %dxx", ss->adreno_tier);
-                float bw = ImGui::CalcTextSize(badge).x + 16;
-                ImGui::SameLine(wsize.x - bw - 14);
-                ImGui::TextColored(COL_GREEN, "%s", badge);
-            }
-        }
-        ImGui::SetCursorPosY(34);
-        dl->AddLine(
-            ImVec2(wpos.x, wpos.y + 34),
-            ImVec2(wpos.x + wsize.x, wpos.y + 34),
-            ImGui::ColorConvertFloat4ToU32(COL_SEP));
+    if (ImGui::BeginTabBar("##MainTabs")) {
+        if (ImGui::BeginTabItem("SGSR"))      { DrawPageSGSR();     ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Frame Gen"))  { DrawPageFrameGen(); ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Display"))    { DrawPageDisplay();  ImGui::EndTabItem(); }
+        if (ImGui::BeginTabItem("Advanced"))   { DrawPageAdvanced(); ImGui::EndTabItem(); }
+        ImGui::EndTabBar();
     }
-
-    // ── Left nav panel ──
-    ImGui::SetCursorPos(ImVec2(0, 36));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_MID);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 6));
-    ImGui::BeginChild("##nav", ImVec2(NAV_W, WIN_H - 36), false, ImGuiWindowFlags_NoScrollbar);
-
-    DrawNavItem("~", "SGSR",      0);
-    DrawNavItem(">>","FRAME GEN", 1);
-    DrawNavItem("[]","DISPLAY",   2);
-    DrawNavItem("/\\","ADVANCED", 3);
-
-    // Version footer inside nav
-    float navH = ImGui::GetWindowHeight();
-    ImGui::SetCursorPosY(navH - 22);
-    ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_LO);
-    ImGui::SetCursorPosX(8);
-    ImGui::Text("BlueInstruction");
-    ImGui::PopStyleColor();
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
-
-    // ── Vertical divider ──
-    {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 wp      = ImGui::GetWindowPos();
-        dl->AddLine(
-            ImVec2(wp.x + NAV_W, wp.y + 36),
-            ImVec2(wp.x + NAV_W, wp.y + WIN_H),
-            ImGui::ColorConvertFloat4ToU32(COL_SEP));
-    }
-
-    // ── Content panel ──
-    ImGui::SetCursorPos(ImVec2(NAV_W + 1, 36));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, COL_BG_DEEP);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(14, 10));
-    ImGui::BeginChild("##content", ImVec2(WIN_W - NAV_W - 1, WIN_H - 36), false);
-
-    switch (m_navPage) {
-        case 0: DrawPageSGSR();     break;
-        case 1: DrawPageFrameGen(); break;
-        case 2: DrawPageDisplay();  break;
-        case 3: DrawPageAdvanced(); break;
-    }
-
-    ImGui::EndChild();
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor();
 
     ImGui::End();
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar();
+    ImGui::PopStyleVar(3);
 #endif
 }
 
@@ -722,7 +731,14 @@ void OverlayMenu::RenderHUD(int width, int height) {
     float now = (float)ImGui::GetTime();
 
     if (now - s_lastSmooth > 0.5f) {
-        s_fps = ImGui::GetIO().Framerate;
+        float rawFps = ImGui::GetIO().Framerate;
+        // ImGui counts ALL Present() calls including FG extra presents.
+        // Divide by FG multiplier to get the real game FPS.
+        SharedState* fgSs = GetSharedState();
+        int fgDiv = 1;
+        if (fgSs) { SharedStateLock l(&fgSs->lock); fgDiv = fgSs->fg_mode; }
+        if (fgDiv < 1) fgDiv = 1;
+        s_fps = rawFps / (float)fgDiv;
         s_ft  = (s_fps > 0.0f) ? (1000.0f / s_fps) : 0.0f;
         s_lastSmooth = now;
     }
@@ -738,30 +754,51 @@ void OverlayMenu::RenderHUD(int width, int height) {
     float ramUsedGB  = (float)s_ramUsed  / 1024.0f;
     float ramTotalGB = (float)s_ramTotal / 1024.0f;
 
-    // FPS color
+    // FPS color — MangoHud v0.7+ gradient style
+    //  90+ = bright green, 60-89 = lime, 45-59 = yellow, 30-44 = orange, <30 = red
     ImVec4 fpsCol;
-    if      (s_fps >= 60.0f) fpsCol = COL_GREEN;
-    else if (s_fps >= 30.0f) fpsCol = COL_YELLOW;
-    else                      fpsCol = COL_RED;
+    if      (s_fps >= 90.0f) fpsCol = ImVec4(0.18f, 0.80f, 0.44f, 1.0f);  // #2ECC71
+    else if (s_fps >= 60.0f) fpsCol = ImVec4(0.64f, 0.85f, 0.47f, 1.0f);  // #A3D977
+    else if (s_fps >= 45.0f) fpsCol = ImVec4(0.95f, 0.77f, 0.06f, 1.0f);  // #F1C40F
+    else if (s_fps >= 30.0f) fpsCol = ImVec4(0.90f, 0.49f, 0.13f, 1.0f);  // #E67E22
+    else                      fpsCol = ImVec4(0.91f, 0.30f, 0.24f, 1.0f);  // #E74C3C
 
-    // frame time color (ms thresholds)
+    // Frame time color — inverse thresholds matching MangoHud
     ImVec4 ftCol;
-    if      (s_ft <= 16.7f) ftCol = COL_GREEN;
-    else if (s_ft <= 33.3f) ftCol = COL_YELLOW;
-    else                     ftCol = COL_RED;
+    if      (s_ft <= 11.1f) ftCol = ImVec4(0.18f, 0.80f, 0.44f, 1.0f);  // <11ms = green
+    else if (s_ft <= 16.7f) ftCol = ImVec4(0.64f, 0.85f, 0.47f, 1.0f);  // <16.7ms = lime
+    else if (s_ft <= 22.2f) ftCol = ImVec4(0.95f, 0.77f, 0.06f, 1.0f);  // <22ms = yellow
+    else if (s_ft <= 33.3f) ftCol = ImVec4(0.90f, 0.49f, 0.13f, 1.0f);  // <33ms = orange
+    else                     ftCol = ImVec4(0.91f, 0.30f, 0.24f, 1.0f);  // >33ms = red
+
+    // ── Check HUD layout preference ──
+    bool hudHoriz = true;
+    {
+        SharedState* hss = GetSharedState();
+        if (hss) { SharedStateLock l(&hss->lock); hudHoriz = hss->hud_horizontal; }
+    }
 
     // ── HUD window — pinned top-left, no decorations ──
     if (!cfg.fps_display) goto startup_notif;
 
-    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+    // Dispatch to vertical HUD if toggled
+    if (!hudHoriz) {
+        RenderHUDVertical((int)ImGui::GetIO().DisplaySize.x,
+                          (int)ImGui::GetIO().DisplaySize.y);
+        goto startup_notif;
+    }
+
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
+    // HUD is moveable — user can drag it to any position.
+    // NoTitleBar + NoResize but NOT NoInputs = draggable.
     if (ImGui::Begin("##HUD", nullptr,
-            ImGuiWindowFlags_NoDecoration      |
-            ImGuiWindowFlags_NoInputs           |
+            ImGuiWindowFlags_NoTitleBar         |
+            ImGuiWindowFlags_NoResize           |
             ImGuiWindowFlags_AlwaysAutoResize   |
             ImGuiWindowFlags_NoSavedSettings    |
             ImGuiWindowFlags_NoFocusOnAppearing |
@@ -962,6 +999,114 @@ startup_notif:
         ImGui::End();
         ImGui::PopStyleVar(2);
     }
+#endif
+}
+
+// ────────────────────────────────────────────────────────
+// RenderHUDVertical — stacked vertical FPS/stats panel
+// ────────────────────────────────────────────────────────
+
+void OverlayMenu::RenderHUDVertical(int width, int height) {
+#ifdef ADRENA_OVERLAY_ENABLED
+    Config& cfg = GetConfig();
+    if (!cfg.fps_display && !m_visible) return;
+
+    // ── Throttled metrics (shared with horizontal HUD via statics) ──
+    float fps = ImGui::GetIO().Framerate;
+    float ft  = (fps > 0.0f) ? (1000.0f / fps) : 0.0f;
+
+    ImVec4 fpsCol;
+    if      (fps >= 60.0f) fpsCol = COL_GREEN;
+    else if (fps >= 30.0f) fpsCol = COL_YELLOW;
+    else                    fpsCol = COL_RED;
+
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowBgAlpha(0.88f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.08f, 0.92f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.30f));
+
+    // Vertical HUD is also moveable — drag to reposition.
+    if (ImGui::Begin("##HUDv", nullptr,
+            ImGuiWindowFlags_NoTitleBar         |
+            ImGuiWindowFlags_NoResize           |
+            ImGuiWindowFlags_AlwaysAutoResize   |
+            ImGuiWindowFlags_NoSavedSettings    |
+            ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav)) {
+
+        // Title
+        ImGui::TextColored(COL_ORANGE, "ADRENAPROXY");
+        ImGui::Separator();
+
+        // FPS
+        ImGui::TextColored(COL_TEXT_LO, "FPS");
+        ImGui::SameLine(70);
+        ImGui::TextColored(fpsCol, "%.0f", fps);
+
+        // Frame time
+        ImGui::TextColored(COL_TEXT_LO, "FTIME");
+        ImGui::SameLine(70);
+        ImVec4 ftCol = (ft <= 16.7f) ? COL_GREEN : (ft <= 33.3f) ? COL_YELLOW : COL_RED;
+        ImGui::TextColored(ftCol, "%.1f ms", ft);
+
+        // SGSR status
+        SharedState* ss = GetSharedState();
+        ImGui::TextColored(COL_TEXT_LO, "SGSR");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->sgsr_active)
+                ImGui::TextColored(COL_GREEN, "DLSS %.0f%%", ss->render_scale * 100.0f);
+            else if (ss->sgsr_enabled)
+                ImGui::TextColored(COL_AMBER, "SHARP");
+            else
+                ImGui::TextColored(COL_TEXT_LO, "OFF");
+        } else {
+            ImGui::TextColored(COL_TEXT_LO, "OFF");
+        }
+
+        // FG
+        ImGui::TextColored(COL_TEXT_LO, "FG");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->fg_mode > 1)
+                ImGui::TextColored(COL_CYAN, "x%d", ss->fg_mode);
+            else
+                ImGui::TextColored(COL_TEXT_LO, "OFF");
+        } else {
+            ImGui::TextColored(COL_TEXT_LO, "OFF");
+        }
+
+        // GPU
+        ImGui::TextColored(COL_TEXT_LO, "GPU");
+        ImGui::SameLine(70);
+        if (ss) {
+            SharedStateLock l(&ss->lock);
+            if (ss->is_adreno && ss->adreno_tier > 0)
+                ImGui::TextColored(COL_TEXT_HI, "A-%dxx", ss->adreno_tier * 100);
+            else
+                ImGui::TextColored(COL_TEXT_MID, "Adreno");
+        } else {
+            ImGui::TextColored(COL_TEXT_MID, "Unknown");
+        }
+
+        // RAM
+        MEMORYSTATUSEX m = {}; m.dwLength = sizeof(m);
+        if (GlobalMemoryStatusEx(&m)) {
+            float used  = (float)(m.ullTotalPhys - m.ullAvailPhys) / (1024*1024*1024.0f);
+            float total = (float)m.ullTotalPhys / (1024*1024*1024.0f);
+            ImGui::TextColored(COL_TEXT_LO, "RAM");
+            ImGui::SameLine(70);
+            ImGui::TextColored(COL_TEXT_HI, "%.1f/%.0fG", used, total);
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
 #endif
 }
 

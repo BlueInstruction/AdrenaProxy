@@ -5,14 +5,23 @@
 
 namespace adrena {
 
-struct SGSR2Barrier : D3D12_RESOURCE_BARRIER {
-    static SGSR2Barrier Transition(ID3D12Resource* res, D3D12_RESOURCE_STATES before,
-        D3D12_RESOURCE_STATES after, UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
-        SGSR2Barrier b{}; b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource = res; b.Transition.StateBefore = before;
-        b.Transition.StateAfter = after; b.Transition.Subresource = sub; return b;
-    }
-};
+// ── Transition barrier helper (compatible with MSVC and MinGW) ──
+// Using a free function returning D3D12_RESOURCE_BARRIER directly avoids
+// MSVC's rejection of accessing anonymous-union members through an
+// inherited struct (error C2228 on b.Transition.pResource).
+static inline D3D12_RESOURCE_BARRIER MakeTransitionBarrier(
+    ID3D12Resource* res, D3D12_RESOURCE_STATES before,
+    D3D12_RESOURCE_STATES after,
+    UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+{
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = res;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter  = after;
+    b.Transition.Subresource = sub;
+    return b;
+}
 
 SGSR2Pass::~SGSR2Pass() { Shutdown(); }
 
@@ -99,11 +108,7 @@ void SGSR2Pass::Execute(ID3D12GraphicsCommandList* cl, const SGSR2Params& p) {
     uint32_t dy = (m_renderH + 7) / 8;
     cl->Dispatch(dx, dy, 1);
 
-    // UAV barrier between passes
-    D3D12_UNORDERED_ACCESS_VIEW_BARRIER uavBarriers[2] = {};
-    uavBarriers[0] = { m_motionDepthClip };
-    uavBarriers[1] = { m_yCocgColor };
-    // Use resource barriers instead
+    // UAV → SRV transitions between passes (acts as UAV barrier + read-state).
     Transition(cl, m_motionDepthClip, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     Transition(cl, m_yCocgColor, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
 
@@ -184,7 +189,7 @@ bool SGSR2Pass::Resize(uint32_t rW, uint32_t rH, uint32_t dW, uint32_t dH) {
 void SGSR2Pass::Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                            D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
     if (before == after) return;
-    auto b = SGSR2Barrier::Transition(res, before, after);
+    auto b = MakeTransitionBarrier(res, before, after);
     cl->ResourceBarrier(1, &b);
 }
 

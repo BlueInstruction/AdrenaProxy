@@ -54,3 +54,9 @@ add_subdirectory(adrena_core)
 add_subdirectory(dlss_proxy)
 add_subdirectory(dxgi_proxy)
 add_subdirectory(version_proxy)
+
+# ── Plugins (example, FSR2, XeSS — optional SDK-gated) ─────────────────────
+add_subdirectory(plugins)
+
+# ── Standalone Config GUI (ImGui + DX11 desktop app) ───────────────────────
+add_subdirectory(config_gui)

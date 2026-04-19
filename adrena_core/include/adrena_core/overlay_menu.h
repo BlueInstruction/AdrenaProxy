@@ -24,7 +24,9 @@ public:
                 ID3D12Resource* backbuffer,
                 uint32_t width, uint32_t height);
 
-    void Toggle() { m_visible = !m_visible; }
+    // Double-press HOME: first press toggles menu, second press within
+    // 350 ms switches HUD layout (horizontal bar ↔ vertical stack).
+    void OnToggleKey();
     bool IsVisible() const { return m_visible; }
 
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
@@ -32,6 +34,7 @@ public:
 private:
     void BuildUI();
     void RenderHUD(int width, int height);
+    void RenderHUDVertical(int width, int height);
     void DrawNavItem(const char* icon, const char* label, int index);
     void DrawPageSGSR();
     void DrawPageFrameGen();
@@ -39,7 +42,8 @@ private:
     void DrawPageAdvanced();
     void DrawStatusBadge(const char* text, ImVec4 color);
 
-    int m_navPage = 0; // 0=SGSR  1=FG  2=Display  3=Advanced
+    int   m_navPage = 0; // 0=SGSR  1=FG  2=Display  3=Advanced
+    float m_lastToggleTime = 0.0f;
 
     ID3D12Device*              m_device     = nullptr;
     ID3D12DescriptorHeap*      m_rtvHeap    = nullptr;
