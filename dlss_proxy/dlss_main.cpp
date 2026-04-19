@@ -3,8 +3,7 @@
 #include <adrena_core/logger.h>
 #include <adrena_core/gpu_detect.h>
 #include <adrena_core/shared_state.h>
-#include <adrena_core/sgsr1_pass.h>
-#include <adrena_core/sgsr2_pass.h>
+#include <adrena_core/plugin_manager.h>
 
 #include <windows.h>
 #include <d3d12.h>
@@ -20,8 +19,6 @@ static std::mutex g_proxyMutex;
 
 static bool g_initialized = false;
 static void* g_device = nullptr;
-static adrena::SGSR1Pass g_sgsr;
-static adrena::SGSR2Pass g_sgsr2;
 static adrena::NGXParameter* g_params = nullptr;
 static bool g_historyValid = false;
 
@@ -35,6 +32,18 @@ static unsigned int g_lastDisplayH = 0;
 // Deferred one-shot flag — GPU detection + shared state init happens on
 // the first NVNGX_Init call instead of DllMain (avoids loader-lock hazard).
 static bool g_earlyInitDone = false;
+
+// ---------------------------------------------------------------
+// Helper: get plugin directory relative to this DLL.
+// ---------------------------------------------------------------
+static void GetPluginDir(wchar_t* out, DWORD outLen) {
+    wchar_t self[MAX_PATH]{};
+    GetModuleFileNameW(
+        GetModuleHandleW(L"adrenaproxy_sgsr.dll"), self, MAX_PATH);
+    wchar_t* last = wcsrchr(self, L'\\');
+    if (last) *last = L'\0';
+    swprintf(out, outLen, L"%s\\plugins", self);
+}
 
 // ---------------------------------------------------------------
 // Deferred early init — called from NVNGX_Init, NOT from DllMain.
@@ -55,6 +64,12 @@ static void EnsureEarlyInit() {
         ss->is_adreno = gpu.isAdreno;
         ss->adreno_tier = gpu.adrenoTier;
     }
+
+    // Register built-in upscalers and discover external plugins.
+    adrena::PluginManager::Get().RegisterBuiltins();
+    wchar_t pluginDir[MAX_PATH];
+    GetPluginDir(pluginDir, MAX_PATH);
+    adrena::PluginManager::Get().LoadExternalPlugins(pluginDir);
 }
 
 // ---------------------------------------------------------------
@@ -105,8 +120,7 @@ __declspec(dllexport) int NVNGX_Shutdown() {
     std::lock_guard<std::mutex> guard(g_proxyMutex);
     AD_LOG_I("NVNGX_Shutdown called");
     if (g_initialized) {
-        g_sgsr.Shutdown();
-        g_sgsr2.Shutdown();
+        adrena::PluginManager::Get().UnloadAll();
         if (g_params) { delete g_params; g_params = nullptr; }
         adrena::SharedState* ss = adrena::GetSharedState();
         if (ss) { adrena::SharedStateLock l(&ss->lock); ss->sgsr_active = false; ss->sgsr_enabled = false; }
@@ -164,33 +178,22 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
 
     if (g_device) {
         ID3D12Device* d3dDevice = static_cast<ID3D12Device*>(g_device);
-        if (cfg.sgsr_mode == adrena::SGSRMode::SGSR2) {
-            if (!g_sgsr2.IsInitialized()) {
-                if (!g_sgsr2.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
+        const char* activeId = (cfg.sgsr_mode == adrena::SGSRMode::SGSR2) ? "sgsr2" : "sgsr1";
+        adrena::IPlugin* plugin = adrena::PluginManager::Get().Find(activeId);
+        if (plugin) {
+            if (!plugin->IsInitialized()) {
+                if (!plugin->Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
                                   *outRenderW, *outRenderH, targetW, targetH)) {
-                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR2 Init failed");
+                    AD_LOG_E("DLSS_GetOptimalSettings: %s Init failed", activeId);
                     return NVNGX_FAIL;
                 }
                 g_historyValid = false;
             } else if (dimsChanged) {
-                if (!g_sgsr2.Resize(*outRenderW, *outRenderH, targetW, targetH)) {
-                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR2 Resize failed");
+                if (!plugin->Resize(*outRenderW, *outRenderH, targetW, targetH)) {
+                    AD_LOG_E("DLSS_GetOptimalSettings: %s Resize failed", activeId);
                     return NVNGX_FAIL;
                 }
                 g_historyValid = false;
-            }
-        } else if (cfg.sgsr_mode == adrena::SGSRMode::SGSR1) {
-            if (!g_sgsr.IsInitialized()) {
-                if (!g_sgsr.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
-                                 *outRenderW, *outRenderH, targetW, targetH)) {
-                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR1 Init failed");
-                    return NVNGX_FAIL;
-                }
-            } else if (dimsChanged) {
-                if (!g_sgsr.Resize(*outRenderW, *outRenderH, targetW, targetH)) {
-                    AD_LOG_E("DLSS_GetOptimalSettings: SGSR1 Resize failed");
-                    return NVNGX_FAIL;
-                }
             }
         }
     }
@@ -279,47 +282,32 @@ __declspec(dllexport) int DLSS_Evaluate(
 
     adrena::Config& cfg = adrena::GetConfig();
 
-    // ── Path A with SGSR2 (temporal upscaling via official algorithm) ──
-    if (cfg.sgsr_mode == adrena::SGSRMode::SGSR2 && g_sgsr2.IsInitialized() && output && color) {
-        adrena::SGSR2Params sgsr2Params{};
-        sgsr2Params.color               = color;
-        sgsr2Params.depth               = depth;
-        sgsr2Params.motion              = motion;
-        sgsr2Params.output              = output;
-        sgsr2Params.sharpness           = sharpness;
-        sgsr2Params.renderWidth         = renderW;
-        sgsr2Params.renderHeight        = renderH;
-        sgsr2Params.displayWidth        = displayW ? displayW : renderW;
-        sgsr2Params.displayHeight       = displayH ? displayH : renderH;
-        sgsr2Params.resetHistory        = !g_historyValid;
-        sgsr2Params.preExposure         = 1.0f;
-        sgsr2Params.minLerpContribution = 0.15f;
-        sgsr2Params.bSameCamera         = true;
-        sgsr2Params.cameraFovAngleHor   = 1.0472f;
-        sgsr2Params.cameraNear          = 0.01f;
-        sgsr2Params.cameraFar           = 1000.0f;
+    // ── Dispatch via PluginManager ──
+    const char* activeId = (cfg.sgsr_mode == adrena::SGSRMode::SGSR2) ? "sgsr2" : "sgsr1";
+    adrena::IPlugin* plugin = adrena::PluginManager::Get().Find(activeId);
 
-        g_sgsr2.Execute(cl, sgsr2Params);
+    if (plugin && plugin->IsInitialized() && output && color) {
+        AdrenaUpscaleParams up{};
+        up.color               = color;
+        up.depth               = depth;
+        up.motion              = motion;
+        up.output              = output;
+        up.sharpness           = sharpness;
+        up.renderWidth         = renderW;
+        up.renderHeight        = renderH;
+        up.displayWidth        = displayW ? displayW : renderW;
+        up.displayHeight       = displayH ? displayH : renderH;
+        up.resetHistory        = g_historyValid ? 0 : 1;
+        up.preExposure         = 1.0f;
+        up.minLerpContribution = 0.15f;
+        up.sameCamera          = 1;
+        up.cameraFovH          = 1.0472f;
+        up.cameraNear          = 0.01f;
+        up.cameraFar           = 1000.0f;
+
+        plugin->Execute(cl, up);
         g_historyValid = true;
-        AD_LOG_I("DLSS_Evaluate: SGSR2 official temporal upscaling executed");
-        return NVNGX_SUCCESS;
-    }
-
-    // ── Path A with SGSR1 (spatial upscaling via official algorithm) ──
-    if (cfg.sgsr_mode == adrena::SGSRMode::SGSR1 && g_sgsr.IsInitialized() && output && color) {
-        adrena::SGSRParams sgsrParams{};
-        sgsrParams.color         = color;
-        sgsrParams.depth         = depth;
-        sgsrParams.motion        = motion;
-        sgsrParams.output        = output;
-        sgsrParams.sharpness     = sharpness;
-        sgsrParams.renderWidth   = renderW;
-        sgsrParams.renderHeight  = renderH;
-        sgsrParams.displayWidth  = displayW ? displayW : renderW;
-        sgsrParams.displayHeight = displayH ? displayH : renderH;
-
-        g_sgsr.Execute(cl, sgsrParams);
-        AD_LOG_I("DLSS_Evaluate: SGSR1 official spatial upscaling executed");
+        AD_LOG_I("DLSS_Evaluate: %s executed", activeId);
         return NVNGX_SUCCESS;
     }
 
