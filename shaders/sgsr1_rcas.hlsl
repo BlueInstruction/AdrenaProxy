@@ -1,50 +1,72 @@
-// ============================================================
-// AdrenaProxy — SGSR1 RCAS (Robust Contrast Adaptive Sharpening)
-// Separate sharpening pass for use after EASU
-// ============================================================
+//============================================================================
+//  SGSR1 RCAS — Standalone Sharpening for Path B
+//  Used for non-DLSS games: render at native res, apply sharpening only.
+//
+//  This is NOT the main upscaling path — that uses sgsr1_official.hlsl.
+//  RCAS is invoked separately when only sharpening is needed.
+//============================================================================
 
-SamplerState      g_sampler  : register(s0);
-Texture2D<float4> g_input    : register(t0);
-RWTexture2D<float4> g_output : register(u0);
-
-cbuffer Constants : register(b0)
+cbuffer RCASConstants : register(b0)
 {
-    uint2  g_renderSize;
-    uint2  g_displaySize;
-    float  g_sharpness;
-    uint   g_frameCount;
+    uint  g_width;       // Display width
+    uint  g_height;      // Display height
+    float g_sharpness;   // 0.0 = none, 2.0 = default SGSR1 sharpness
+    uint  g_padding;
 };
 
-[numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+Texture2D<half4>     InputTexture   : register(t0);
+RWTexture2D<half4>   OutputTexture  : register(u0);
+SamplerState         samLinearClamp : register(s0);
+
+// ── Simplified RCAS-style adaptive sharpening ──
+
+half4 RCASFilter(half2 center, half2 pixelSize)
 {
-    if (any(dtid.xy >= g_displaySize))
+    // Sample 5-tap cross
+    half4 n = InputTexture.SampleLevel(samLinearClamp,
+        center + half2(0, -pixelSize.y), 0);
+    half4 s = InputTexture.SampleLevel(samLinearClamp,
+        center + half2(0,  pixelSize.y), 0);
+    half4 w = InputTexture.SampleLevel(samLinearClamp,
+        center + half2(-pixelSize.x, 0), 0);
+    half4 e = InputTexture.SampleLevel(samLinearClamp,
+        center + half2( pixelSize.x, 0), 0);
+    half4 c = InputTexture.SampleLevel(samLinearClamp,
+        center, 0);
+
+    // Luma weights (ITU-R BT.709)
+    static const half3 lw = half3(0.2126, 0.7152, 0.0722);
+
+    half lN = dot(n.rgb, lw);
+    half lS = dot(s.rgb, lw);
+    half lW = dot(w.rgb, lw);
+    half lE = dot(e.rgb, lw);
+    half lC = dot(c.rgb, lw);
+
+    // Local contrast range
+    half rMax  = max(lC, max(max(lN, lS), max(lW, lE)));
+    half rMin  = min(lC, min(min(lN, lS), min(lW, lE)));
+    half range = rMax - rMin;
+
+    // Attenuate sharpening in high-contrast areas
+    half att    = 1.0 - clamp(range * g_sharpness, 0.0, 1.0);
+    half weight = att * att;
+
+    // Blend: center vs neighbor average
+    half3 blended = (n.rgb + s.rgb + w.rgb + e.rgb) * half(0.25);
+    half3 result  = lerp(blended, c.rgb, weight);
+
+    return half4(saturate(result), 1.0);
+}
+
+[numthreads(8, 8, 1)]
+void CS_main(uint3 dtid : SV_DispatchThreadID)
+{
+    if (dtid.x >= g_width || dtid.y >= g_height)
         return;
-    
-    float2 uv = (float2(dtid.xy) + 0.5) / g_displaySize;
-    float2 dp = 1.0 / g_displaySize;
-    
-    // 5-tap cross kernel
-    float4 c = g_input.SampleLevel(g_sampler, uv, 0);
-    float4 l = g_input.SampleLevel(g_sampler, uv + float2(-dp.x, 0), 0);
-    float4 r = g_input.SampleLevel(g_sampler, uv + float2( dp.x, 0), 0);
-    float4 t = g_input.SampleLevel(g_sampler, uv + float2(0, -dp.y), 0);
-    float4 b = g_input.SampleLevel(g_sampler, uv + float2(0,  dp.y), 0);
-    
-    // Min/Max for anti-ringing
-    float4 mn = min(min(l, r), min(t, b));
-    float4 mx = max(max(l, r), max(t, b));
-    
-    // Contrast-adaptive sharpening weight
-    float peak = -1.0 / max(0.001, lerp(1.0, 3.0, 1.0 - g_sharpness));
-    
-    float4 w = float4(1, 1, 1, 1) + float4(peak, peak, peak, peak);
-    float4 weight = float4(1, 1, 1, 1) + 4.0 * w;
-    
-    float4 result = (c + (l + r + t + b) * w) / weight;
-    
-    // Anti-ringing clamp
-    result = clamp(result, mn, mx);
-    
-    g_output[dtid.xy] = result;
+
+    half2 pixelSize = half2(1.0 / half(g_width), 1.0 / half(g_height));
+    half2 uv = (half2(dtid.xy) + 0.5) * pixelSize;
+
+    OutputTexture[dtid.xy] = RCASFilter(uv, pixelSize);
 }

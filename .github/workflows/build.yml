@@ -13,8 +13,6 @@ env:
 jobs:
   build-mingw:
     runs-on: ubuntu-latest
-    # MinGW build is compile-check only — the DLL does not work in Wine/Proton
-    # due to MinGW C++ runtime incompatibilities. Use the MSVC build for deployment.
     continue-on-error: true
     steps:
     - uses: actions/checkout@v4
@@ -44,8 +42,13 @@ jobs:
     - name: Package
       run: |
         mkdir -p dist
-        cp build/dxgi.dll dist/
+        cp build/bin/adrenaproxy_sgsr.dll dist/ 2>/dev/null || true
+        cp build/bin/adrenaproxy_dxgi.dll dist/ 2>/dev/null || true
+        cp build/bin/adrenaproxy_version.dll dist/ 2>/dev/null || true
         cp adrena_proxy.ini dist/
+        cp "AdrenaProxy Setup.bat" dist/
+        cp "AdrenaProxy Setup.sh" dist/
+        cp "AdrenaProxy Uninstall.bat" dist/
         cp README.md dist/
         cp LICENSE dist/
 
@@ -77,8 +80,13 @@ jobs:
     - name: Package
       run: |
         mkdir dist
-        copy build\Release\dxgi.dll dist\
+        copy build\bin\Release\adrenaproxy_sgsr.dll dist\ 2>$null; if ($LASTEXITCODE -ne 0) { echo "sgsr not found" }
+        copy build\bin\Release\adrenaproxy_dxgi.dll dist\ 2>$null; if ($LASTEXITCODE -ne 0) { echo "dxgi not found" }
+        copy build\bin\Release\adrenaproxy_version.dll dist\ 2>$null; if ($LASTEXITCODE -ne 0) { echo "version not found" }
         copy adrena_proxy.ini dist\
+        copy "AdrenaProxy Setup.bat" dist\
+        copy "AdrenaProxy Setup.sh" dist\
+        copy "AdrenaProxy Uninstall.bat" dist\
         copy README.md dist\
         copy LICENSE dist\
 

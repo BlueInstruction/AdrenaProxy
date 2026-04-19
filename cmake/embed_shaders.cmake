@@ -4,13 +4,11 @@ function(embed_hlsl_shaders target)
     file(MAKE_DIRECTORY ${GEN_DIR})
 
     set(SHADER_FILES
-        sgsr1_easu.hlsl
+        sgsr1_official.hlsl
         sgsr1_rcas.hlsl
-        sgsr2_reproject.hlsl
+        sgsr2_convert.hlsl
         sgsr2_upscale.hlsl
-        fg_motion_est.hlsl
         fg_interpolate.hlsl
-        fg_reactive_mask.hlsl
     )
 
     set(OUTPUT_CPP ${GEN_DIR}/embedded_shaders.cpp)
@@ -38,7 +36,6 @@ function(embed_hlsl_shaders target)
 
         file(READ ${SHADER_PATH} SHADER_CONTENT)
 
-        # Strip .hlsl extension BEFORE making C identifier
         string(REPLACE ".hlsl" "" VAR_BASE ${SHADER})
         string(MAKE_C_IDENTIFIER ${VAR_BASE} VAR_NAME)
 
