@@ -64,27 +64,10 @@ OverlayMenu::~OverlayMenu() { Shutdown(); }
 // ────────────────────────────────────────────────────────
 
 void OverlayMenu::OnToggleKey() {
-#ifdef ADRENA_OVERLAY_ENABLED
-    float now = (float)GetTickCount64() / 1000.0f;
-    float dt  = now - m_lastToggleTime;
-    m_lastToggleTime = now;
-
-    if (dt < 0.35f && dt > 0.02f) {
-        // Double-tap detected — toggle HUD layout instead of menu
-        SharedState* ss = GetSharedState();
-        if (ss) {
-            SharedStateLock l(&ss->lock);
-            ss->hud_horizontal = !ss->hud_horizontal;
-        }
-        AD_LOG_I("HUD layout toggled to %s",
-                 (ss && ss->hud_horizontal) ? "horizontal" : "vertical");
-    } else {
-        // Single tap — toggle menu visibility
-        m_visible = !m_visible;
-    }
-#else
+    // HOME key = toggle menu visibility only.
+    // HUD layout is changed via the Display settings combo.
     m_visible = !m_visible;
-#endif
+    AD_LOG_I("Menu toggled: %s", m_visible ? "visible" : "hidden");
 }
 
 // ────────────────────────────────────────────────────────
@@ -435,36 +418,75 @@ void OverlayMenu::DrawPageSGSR() {
         ImGui::TextColored(COL_AMBER, "SGSR2 needs depth + motion (DLSS games)");
     }
 
+    // ── Quality Preset ──
+    SectionHeader("QUALITY PRESET");
+    {
+        const char* qualities[] = {
+            "Ultra Quality  (77%%)",
+            "Quality  (67%%)",
+            "Balanced  (59%%)",
+            "Performance  (50%%)",
+            "Ultra Performance  (33%%)"
+        };
+        const float qscales[] = { 0.77f, 0.67f, 0.59f, 0.50f, 0.33f };
+        int qIdx = (int)cfg.quality;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##quality", &qIdx, qualities, 5)) {
+            cfg.quality = (Quality)qIdx;
+            cfg.custom_scale = qscales[qIdx];
+            cfg.ApplyRenderScale();
+            if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+        }
+    }
+
     // ── Resolution ──
     SectionHeader("RENDER RESOLUTION");
-
-    const char* presets[] = {
-        "Native  100%%",
-        "1440x810  (56%%)",
-        "1280x720  (50%%)",
-        "Ultra Quality  77%%",
-        "Quality  67%%",
-        "Balanced  59%%",
-        "Performance  50%%",
-        "960x540  (37%%)",
-        "854x480  (33%%)",
-        "Ultra Perf  33%%",
-        "Custom..."
-    };
-    const float pscales[] = { 1.0f, 0.5625f, 0.50f, 0.77f, 0.67f, 0.59f, 0.50f, 0.375f, 0.333f, 0.33f, 0.0f };
-    static int presetIdx = 10;
-    ImGui::SetNextItemWidth(-1);
-    if (ImGui::Combo("##res", &presetIdx, presets, 11)) {
-        if (presetIdx < 10) { cfg.custom_scale = pscales[presetIdx]; cfg.ApplyRenderScale(); }
-        if (ss && presetIdx < 10) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+    {
+        const char* resolutions[] = {
+            "Native",
+            "2560x1440",
+            "1920x1080",
+            "1600x900",
+            "1440x810",
+            "1366x768",
+            "1280x720",
+            "1152x648",
+            "1024x576",
+            "960x540",
+            "854x480",
+            "800x450",
+            "768x432",
+            "720x405",
+            "640x360",
+            "576x324",
+            "480x270",
+            "Custom..."
+        };
+        const float rscales[] = {
+            1.00f, 0.75f, 0.5625f, 0.469f, 0.5625f, 0.533f, 0.50f,
+            0.45f, 0.40f, 0.375f, 0.333f, 0.3125f, 0.30f, 0.281f,
+            0.25f, 0.225f, 0.1875f, 0.0f
+        };
+        static int resIdx = 17; // Custom
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##res", &resIdx, resolutions, 18)) {
+            if (resIdx < 17) {
+                cfg.custom_scale = rscales[resIdx];
+                cfg.ApplyRenderScale();
+                if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
+            }
+        }
     }
 
+    // ── Custom Scale Slider ──
+    SectionHeader("CUSTOM SCALE");
     float scale = cfg.GetRenderScale();
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##scale", &scale, 0.25f, 1.0f, "Scale  %.0f%%")) {
-        cfg.custom_scale = scale; cfg.ApplyRenderScale(); presetIdx = 10;
+    if (ImGui::SliderFloat("##scale", &scale, 0.10f, 1.0f, "%.0f%%")) {
+        cfg.custom_scale = scale; cfg.ApplyRenderScale();
         if (ss) { SharedStateLock l(&ss->lock); ss->render_scale = cfg.render_scale; }
     }
+    SmallLabel("Drag to set any render scale");
 
     // ── Sharpness ──
     SectionHeader("SHARPNESS");
@@ -562,18 +584,24 @@ void OverlayMenu::DrawPageDisplay() {
     SectionHeader("KEY BINDINGS");
     ImGui::PushStyleColor(ImGuiCol_Text, COL_TEXT_MID);
     ImGui::BulletText("HOME               Toggle menu");
-    ImGui::BulletText("HOME x2 (fast)     Switch HUD layout");
     ImGui::BulletText("All changes        Apply instantly");
     ImGui::PopStyleColor();
 
-    SectionHeader("HUD LAYOUT");
+    SectionHeader("HUD ORIENTATION");
     {
         SharedState* hss = GetSharedState();
         bool isHoriz = true;
         if (hss) { SharedStateLock l(&hss->lock); isHoriz = hss->hud_horizontal; }
-        ImGui::TextColored(isHoriz ? COL_CYAN : COL_AMBER,
-            "Current: %s", isHoriz ? "Horizontal Bar" : "Vertical Stack");
-        ImGui::TextDisabled("Double-press HOME to switch");
+        const char* orientations[] = { "Horizontal Bar", "Vertical Stack" };
+        int oriIdx = isHoriz ? 0 : 1;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::Combo("##hudori", &oriIdx, orientations, 2)) {
+            if (hss) {
+                SharedStateLock l(&hss->lock);
+                hss->hud_horizontal = (oriIdx == 0);
+            }
+            AD_LOG_I("HUD orientation changed to %s", orientations[oriIdx]);
+        }
     }
 #endif
 }
@@ -703,7 +731,14 @@ void OverlayMenu::RenderHUD(int width, int height) {
     float now = (float)ImGui::GetTime();
 
     if (now - s_lastSmooth > 0.5f) {
-        s_fps = ImGui::GetIO().Framerate;
+        float rawFps = ImGui::GetIO().Framerate;
+        // ImGui counts ALL Present() calls including FG extra presents.
+        // Divide by FG multiplier to get the real game FPS.
+        SharedState* fgSs = GetSharedState();
+        int fgDiv = 1;
+        if (fgSs) { SharedStateLock l(&fgSs->lock); fgDiv = fgSs->fg_mode; }
+        if (fgDiv < 1) fgDiv = 1;
+        s_fps = rawFps / (float)fgDiv;
         s_ft  = (s_fps > 0.0f) ? (1000.0f / s_fps) : 0.0f;
         s_lastSmooth = now;
     }
@@ -719,17 +754,22 @@ void OverlayMenu::RenderHUD(int width, int height) {
     float ramUsedGB  = (float)s_ramUsed  / 1024.0f;
     float ramTotalGB = (float)s_ramTotal / 1024.0f;
 
-    // FPS color
+    // FPS color — MangoHud v0.7+ gradient style
+    //  90+ = bright green, 60-89 = lime, 45-59 = yellow, 30-44 = orange, <30 = red
     ImVec4 fpsCol;
-    if      (s_fps >= 60.0f) fpsCol = COL_GREEN;
-    else if (s_fps >= 30.0f) fpsCol = COL_YELLOW;
-    else                      fpsCol = COL_RED;
+    if      (s_fps >= 90.0f) fpsCol = ImVec4(0.18f, 0.80f, 0.44f, 1.0f);  // #2ECC71
+    else if (s_fps >= 60.0f) fpsCol = ImVec4(0.64f, 0.85f, 0.47f, 1.0f);  // #A3D977
+    else if (s_fps >= 45.0f) fpsCol = ImVec4(0.95f, 0.77f, 0.06f, 1.0f);  // #F1C40F
+    else if (s_fps >= 30.0f) fpsCol = ImVec4(0.90f, 0.49f, 0.13f, 1.0f);  // #E67E22
+    else                      fpsCol = ImVec4(0.91f, 0.30f, 0.24f, 1.0f);  // #E74C3C
 
-    // frame time color (ms thresholds)
+    // Frame time color — inverse thresholds matching MangoHud
     ImVec4 ftCol;
-    if      (s_ft <= 16.7f) ftCol = COL_GREEN;
-    else if (s_ft <= 33.3f) ftCol = COL_YELLOW;
-    else                     ftCol = COL_RED;
+    if      (s_ft <= 11.1f) ftCol = ImVec4(0.18f, 0.80f, 0.44f, 1.0f);  // <11ms = green
+    else if (s_ft <= 16.7f) ftCol = ImVec4(0.64f, 0.85f, 0.47f, 1.0f);  // <16.7ms = lime
+    else if (s_ft <= 22.2f) ftCol = ImVec4(0.95f, 0.77f, 0.06f, 1.0f);  // <22ms = yellow
+    else if (s_ft <= 33.3f) ftCol = ImVec4(0.90f, 0.49f, 0.13f, 1.0f);  // <33ms = orange
+    else                     ftCol = ImVec4(0.91f, 0.30f, 0.24f, 1.0f);  // >33ms = red
 
     // ── Check HUD layout preference ──
     bool hudHoriz = true;
@@ -748,15 +788,17 @@ void OverlayMenu::RenderHUD(int width, int height) {
         goto startup_notif;
     }
 
-    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(0, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
 
+    // HUD is moveable — user can drag it to any position.
+    // NoTitleBar + NoResize but NOT NoInputs = draggable.
     if (ImGui::Begin("##HUD", nullptr,
-            ImGuiWindowFlags_NoDecoration      |
-            ImGuiWindowFlags_NoInputs           |
+            ImGuiWindowFlags_NoTitleBar         |
+            ImGuiWindowFlags_NoResize           |
             ImGuiWindowFlags_AlwaysAutoResize   |
             ImGuiWindowFlags_NoSavedSettings    |
             ImGuiWindowFlags_NoFocusOnAppearing |
@@ -978,7 +1020,7 @@ void OverlayMenu::RenderHUDVertical(int width, int height) {
     else if (fps >= 30.0f) fpsCol = COL_YELLOW;
     else                    fpsCol = COL_RED;
 
-    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(8, 8), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowBgAlpha(0.88f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10, 8));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
@@ -986,9 +1028,10 @@ void OverlayMenu::RenderHUDVertical(int width, int height) {
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.05f, 0.05f, 0.08f, 0.92f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 0.42f, 0.0f, 0.30f));
 
+    // Vertical HUD is also moveable — drag to reposition.
     if (ImGui::Begin("##HUDv", nullptr,
-            ImGuiWindowFlags_NoDecoration      |
-            ImGuiWindowFlags_NoInputs           |
+            ImGuiWindowFlags_NoTitleBar         |
+            ImGuiWindowFlags_NoResize           |
             ImGuiWindowFlags_AlwaysAutoResize   |
             ImGuiWindowFlags_NoSavedSettings    |
             ImGuiWindowFlags_NoFocusOnAppearing |

@@ -373,10 +373,20 @@ HRESULT ProxySwapChain::PresentImpl(UINT SyncInterval, UINT Flags) {
     }
 
     // ── Frame Generation: Pure Extra Present ──
-    // Extra Present(0,0) calls AFTER overlay is drawn on the backbuffer.
-    // Every presented frame now includes the overlay — no flicker.
-    int extraPresents = fgMode - 1;
+    // Extra Present(0,0) calls duplicate the current backbuffer content.
+    // The overlay was already drawn on it, so every presented frame shows it.
+    //
+    // FG x3 caused flicker because odd extra-present counts interact badly
+    // with triple-buffered swap chains (3 buffers, 2 extra = buffer index
+    // wraps around unevenly). Fix: only allow x2 or x4 (1 or 3 extras).
+    // x3 is remapped to x2 to avoid the flicker.
+    int effectiveFg = fgMode;
+    if (effectiveFg == 3) effectiveFg = 2; // x3 → x2 (avoid triple-buffer flicker)
+
+    int extraPresents = effectiveFg - 1;
     if (needFG && extraPresents > 0) {
+        AD_LOG_I("FG: presenting %d extra frames (mode x%d, effective x%d)",
+                 extraPresents, fgMode, effectiveFg);
         for (int i = 0; i < extraPresents; i++) {
             m_real->Present(0, 0);
         }
@@ -396,7 +406,7 @@ HRESULT ProxySwapChain::Present(UINT SyncInterval, UINT Flags) {
 // ────────────────────────────────────────────────────────
 
 LRESULT CALLBACK ProxySwapChain::StaticWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
-    // Toggle overlay on hotkey
+    // HOME key = toggle menu only (no double-tap HUD toggle)
     if (msg == WM_KEYDOWN) {
         Config& cfg = GetConfig();
         if (wp == (WPARAM)cfg.toggle_key && s_instance && s_instance->m_overlay) {
