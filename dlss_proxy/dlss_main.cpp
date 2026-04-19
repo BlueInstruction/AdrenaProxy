@@ -20,6 +20,13 @@ static adrena::SGSR2Pass g_sgsr2;
 static adrena::NGXParameter* g_params = nullptr;
 static bool g_historyValid = false;
 
+// Track last dimensions to avoid unnecessary Resize() calls that destroy
+// GPU resources and reset temporal history on every DLSS_GetOptimalSettings.
+static unsigned int g_lastRenderW  = 0;
+static unsigned int g_lastRenderH  = 0;
+static unsigned int g_lastDisplayW = 0;
+static unsigned int g_lastDisplayH = 0;
+
 // ---------------------------------------------------------------
 // DLL Entry Point
 // ---------------------------------------------------------------
@@ -84,6 +91,7 @@ __declspec(dllexport) int NVNGX_Shutdown() {
         g_initialized = false;
         g_historyValid = false;
         g_device = nullptr;
+        g_lastRenderW = g_lastRenderH = g_lastDisplayW = g_lastDisplayH = 0;
     }
     return NVNGX_SUCCESS;
 }
@@ -125,6 +133,11 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
     *outSharpness = cfg.sharpness;
 
     // Init/resize SGSR pipelines based on selected mode.
+    // Only call Resize() when dimensions actually changed — unconditional
+    // resizing destroys GPU resources and resets SGSR2 temporal history.
+    bool dimsChanged = (*outRenderW != g_lastRenderW  || *outRenderH != g_lastRenderH ||
+                        targetW     != g_lastDisplayW || targetH     != g_lastDisplayH);
+
     if (g_device) {
         ID3D12Device* d3dDevice = static_cast<ID3D12Device*>(g_device);
         if (cfg.sgsr_mode == adrena::SGSRMode::SGSR2) {
@@ -132,7 +145,7 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
                 g_sgsr2.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
                              *outRenderW, *outRenderH, targetW, targetH);
                 g_historyValid = false;
-            } else {
+            } else if (dimsChanged) {
                 g_sgsr2.Resize(*outRenderW, *outRenderH, targetW, targetH);
                 g_historyValid = false;
             }
@@ -140,11 +153,16 @@ __declspec(dllexport) int DLSS_GetOptimalSettings(
             if (!g_sgsr.IsInitialized()) {
                 g_sgsr.Init(d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM,
                             *outRenderW, *outRenderH, targetW, targetH);
-            } else {
+            } else if (dimsChanged) {
                 g_sgsr.Resize(*outRenderW, *outRenderH, targetW, targetH);
             }
         }
     }
+
+    g_lastRenderW  = *outRenderW;
+    g_lastRenderH  = *outRenderH;
+    g_lastDisplayW = targetW;
+    g_lastDisplayH = targetH;
 
     adrena::SharedState* ss = adrena::GetSharedState();
     if (ss) {
@@ -328,7 +346,10 @@ __declspec(dllexport) void NVSDK_NGX_Parameter_Reset(void* params) {
     if (params) static_cast<adrena::NGXParameter*>(params)->Reset();
 }
 __declspec(dllexport) void NVSDK_NGX_Parameter_Destroy(void* params) {
-    if (params) delete static_cast<adrena::NGXParameter*>(params);
+    if (params) {
+        if (params == g_params) g_params = nullptr;
+        delete static_cast<adrena::NGXParameter*>(params);
+    }
 }
 
 } // extern "C"
