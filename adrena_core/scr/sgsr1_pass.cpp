@@ -413,16 +413,15 @@ bool SGSR1Pass::CreateIntermediate()
     D3D12_HEAP_PROPERTIES defaultHeap{};
     defaultHeap.Type = D3D12_HEAP_TYPE_DEFAULT;
 
-    D3D12_CLEAR_VALUE clearVal{};
-    clearVal.Format = m_format;
-    memset(clearVal.Color, 0, sizeof(clearVal.Color));
-
+    // pOptimizedClearValue must be nullptr for textures without
+    // ALLOW_RENDER_TARGET or ALLOW_DEPTH_STENCIL flags; passing a non-null
+    // value causes CreateCommittedResource to return E_INVALIDARG.
     hr = m_device->CreateCommittedResource(
         &defaultHeap,
         D3D12_HEAP_FLAG_NONE,
         &texDesc,
         D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
-        &clearVal,
+        nullptr,
         IID_PPV_ARGS(&m_intermediate));
 
     if (FAILED(hr)) {
