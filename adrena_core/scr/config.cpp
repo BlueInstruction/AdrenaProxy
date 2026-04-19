@@ -88,9 +88,12 @@ void Config::Load(const std::string& path) {
         if (section == "SGSR") {
             if (k == "enabled")       enabled = (std::stoi(v) != 0);
             else if (k == "mode")     sgsr_mode = ParseSGSRMode(v);
+            else if (k == "plugin")   upscaler_plugin = v;
             else if (k == "quality")  quality = ParseQuality(v);
             else if (k == "custom_scale") custom_scale = std::stof(v);
             else if (k == "sharpness") sharpness = std::stof(v);
+        } else if (section == "Upscaler") {
+            if (k == "plugin")        upscaler_plugin = v;
         } else if (section == "FrameGeneration") {
             if (k == "mode")           fg_mode = ParseFGMode(v);
             else if (k == "fps_threshold") fps_threshold = std::stoi(v);

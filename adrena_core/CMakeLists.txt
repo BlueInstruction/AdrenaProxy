@@ -6,6 +6,8 @@ set(CORE_SOURCES
     scr/sgsr1_pass.cpp
     scr/overlay_menu.cpp
     scr/guids.cpp
+    scr/plugin_manager.cpp
+    scr/builtin_plugins.cpp
 )
 
 if(ADRENA_ENABLE_SGSR2)
