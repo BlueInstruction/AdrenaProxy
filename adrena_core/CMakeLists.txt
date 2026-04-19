@@ -5,6 +5,7 @@ set(CORE_SOURCES
     scr/shared_state.cpp
     scr/sgsr1_pass.cpp
     scr/overlay_menu.cpp
+    scr/guids.cpp
 )
 
 if(ADRENA_ENABLE_SGSR2)

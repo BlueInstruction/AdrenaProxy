@@ -5,21 +5,23 @@
 
 namespace adrena {
 
-// ── MinGW-compatible barrier helper ──
-struct ResourceBarrier : D3D12_RESOURCE_BARRIER {
-    static ResourceBarrier Transition(ID3D12Resource* res,
-        D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
-        UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
-    {
-        ResourceBarrier b{};
-        b.Type                    = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        b.Transition.pResource   = res;
-        b.Transition.StateBefore = before;
-        b.Transition.StateAfter  = after;
-        b.Transition.Subresource = sub;
-        return b;
-    }
-};
+// ── Transition barrier helper (compatible with MSVC and MinGW) ──
+// Using a free function returning D3D12_RESOURCE_BARRIER directly avoids
+// MSVC's rejection of accessing anonymous-union members through an
+// inherited struct (error C2228 on b.Transition.pResource).
+static inline D3D12_RESOURCE_BARRIER MakeTransitionBarrier(
+    ID3D12Resource* res,
+    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
+    UINT sub = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES)
+{
+    D3D12_RESOURCE_BARRIER b{};
+    b.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    b.Transition.pResource   = res;
+    b.Transition.StateBefore = before;
+    b.Transition.StateAfter  = after;
+    b.Transition.Subresource = sub;
+    return b;
+}
 
 // ══════════════════════════════════════════════════════════════
 //  Lifetime
@@ -202,7 +204,7 @@ void SGSR1Pass::Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
                            D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
 {
     if (before == after) return;
-    auto b = ResourceBarrier::Transition(res, before, after);
+    auto b = MakeTransitionBarrier(res, before, after);
     cl->ResourceBarrier(1, &b);
 }
 

@@ -9,7 +9,7 @@
 #ifdef ADRENA_DX12_OVERLAY
 #include <imgui_impl_dx12.h>
 #endif
-#include "adrena_core/Hack.h"
+#include "adrena_core/hack.h"
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 #endif
 
