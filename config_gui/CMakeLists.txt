@@ -7,14 +7,21 @@ add_executable(adrena_config WIN32 config_gui_main.cpp)
 
 target_link_libraries(adrena_config PRIVATE
     imgui_lib
-    d3d11 dxgi
+    d3d11 dxgi d3dcompiler dwmapi
 )
 
 target_compile_features(adrena_config PRIVATE cxx_std_17)
 target_compile_definitions(adrena_config PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
+    UNICODE
+    _UNICODE
 )
+
+# MinGW needs -municode for wWinMain entry point
+if(NOT MSVC)
+    target_link_options(adrena_config PRIVATE -municode)
+endif()
 
 set_target_properties(adrena_config PROPERTIES
     OUTPUT_NAME "adrena_config"
