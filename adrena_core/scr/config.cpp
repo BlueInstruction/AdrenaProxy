@@ -83,9 +83,77 @@ bool Config::PollReload() {
     return false;
 }
 
+// Scan just enough of the INI to pick out a top-level `profile = <name>`
+// directive (outside of any [section]).  Used by Load() to overlay a
+// per-environment preset from profiles/<name>.ini before the user INI.
+static std::string ScanProfileName(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) return "";
+    std::string line, section;
+    while (std::getline(file, line)) {
+        line = Trim(line);
+        if (line.empty() || line[0] == ';' || line[0] == '#') continue;
+        if (line[0] == '[') {
+            auto e = line.find(']');
+            if (e != std::string::npos) section = line.substr(1, e - 1);
+            continue;
+        }
+        if (!section.empty()) continue;  // only the preamble counts
+        auto eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        if (Trim(line.substr(0, eq)) == "profile") return Trim(line.substr(eq + 1));
+    }
+    return "";
+}
+
+static std::string DirOf(const std::string& path) {
+    auto p = path.find_last_of("\\/");
+    return (p == std::string::npos) ? "" : path.substr(0, p + 1);
+}
+
+// Resolve a profile name to an absolute file path.  Search order:
+//   1. <userIniDir>/profiles/<name>.ini
+//   2. <hostDllDir>/profiles/<name>.ini   (same folder as adrena_proxy.ini)
+// Returns empty string if the file doesn't exist in either location.
+static std::string ResolveProfilePath(const std::string& name, const std::string& userIni) {
+    if (name.empty()) return "";
+    std::string rel = "profiles\\" + name + ".ini";
+    std::string c1 = DirOf(userIni) + rel;
+    std::ifstream f1(c1);
+    if (f1.good()) return c1;
+    char exePath[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string c2 = DirOf(exePath) + rel;
+    std::ifstream f2(c2);
+    if (f2.good()) return c2;
+    return "";
+}
+
 void Config::Load(const std::string& path) {
     m_loadedPath = path;
     m_lastWriteTime = GetFileWriteTime(path);
+
+    // Two-pass loading: if the user INI names a profile, consume the
+    // profile first (without touching m_loadedPath so hot-reload keeps
+    // watching the user file) and then overlay the user INI on top.
+    std::string profileName = ScanProfileName(path);
+    if (!profileName.empty()) {
+        std::string profilePath = ResolveProfilePath(profileName, path);
+        if (!profilePath.empty()) {
+            AD_LOG_I("Config: overlaying profile '%s' from %s",
+                     profileName.c_str(), profilePath.c_str());
+            // Recurse, but preserve the user path as the watched file.
+            std::string userPath = m_loadedPath;
+            uint64_t    userMTime= m_lastWriteTime;
+            Load(profilePath);
+            m_loadedPath    = userPath;
+            m_lastWriteTime = userMTime;
+        } else {
+            AD_LOG_W("Config: profile '%s' not found in profiles/ — ignoring",
+                     profileName.c_str());
+        }
+        profile = profileName;
+    }
 
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -107,6 +175,11 @@ void Config::Load(const std::string& path) {
         std::string k = Trim(line.substr(0, eq));
         std::string v = Trim(line.substr(eq + 1));
         try {
+        // Top-level (pre-[section]) directives.
+        if (section.empty()) {
+            if (k == "profile") profile = v;
+            continue;
+        }
         if (section == "SGSR") {
             if (k == "enabled")       enabled = (std::stoi(v) != 0);
             else if (k == "mode")     sgsr_mode = ParseSGSRMode(v);
