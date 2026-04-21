@@ -35,6 +35,12 @@ struct Config {
     uint32_t  display_width  = 0;
     uint32_t  display_height = 0;
 
+    // Named environment profile (e.g. "winlator", "snapdragon_x_elite",
+    // "steamdeck_proton", "fex_turnip").  When non-empty, Load() reads
+    // profiles/<name>.ini first (relative to the host DLL or to the
+    // user INI's directory) and then overlays the user INI on top.
+    std::string profile;
+
     float GetRenderScale() const;
     void  ApplyRenderScale();
     void  Load(const std::string& path);
