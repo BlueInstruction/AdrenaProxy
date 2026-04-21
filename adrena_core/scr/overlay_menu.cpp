@@ -500,8 +500,10 @@ void OverlayMenu::DrawPageSGSR() {
     SectionHeader("STATUS");
     if (ss) {
         SharedStateLock l(&ss->lock);
+
+        // Path + current dims
         if (ss->sgsr_active) {
-            ImGui::TextColored(COL_GREEN, "DLSS Path — %ux%u  →  %ux%u  (%.0f%%)",
+            ImGui::TextColored(COL_GREEN, "DLSS Path — %ux%u  ->  %ux%u  (%.0f%%)",
                 ss->render_width, ss->render_height,
                 ss->display_width, ss->display_height,
                 ss->render_scale * 100.0f);
@@ -509,6 +511,60 @@ void OverlayMenu::DrawPageSGSR() {
             ImGui::TextColored(COL_AMBER, "DXGI Sharpening  (%.0f%%)", cfg.render_scale * 100.0f);
         } else {
             ImGui::TextColored(COL_TEXT_LO, "Disabled");
+        }
+
+        // Quality + FG mode (always visible so user sees whether their
+        // selection actually took effect).
+        const char* qName =
+            (cfg.quality == Quality::UltraQuality)     ? "Ultra Quality (77%)"   :
+            (cfg.quality == Quality::Quality)          ? "Quality (67%)"         :
+            (cfg.quality == Quality::Balanced)         ? "Balanced (59%)"        :
+            (cfg.quality == Quality::Performance)      ? "Performance (50%)"     :
+                                                         "Ultra Performance (33%)";
+        const char* fgName =
+            (cfg.fg_mode == FGMode::X1) ? "x1 (off)" :
+            (cfg.fg_mode == FGMode::X2) ? "x2"        :
+            (cfg.fg_mode == FGMode::X3) ? "x3"        :
+                                          "x4";
+        ImGui::TextColored(COL_TEXT_LO, "Preset: %s    FG: %s", qName, fgName);
+
+        // ── DLSS Proxy Counters ──────────────────────────────────
+        // These tell you whether the game is actually calling the NGX
+        // proxy.  If init_count > 0 but evaluate_count stays 0, the
+        // game reached initialisation but never dispatched a frame —
+        // the most common cause is a parameter-key name mismatch (the
+        // proxy couldn't find the color/output resource) or a
+        // feasibility check returning 'unsupported'.
+        const char* pluginName =
+            (ss->dlss_last_plugin_id == 1) ? "SGSR1" :
+            (ss->dlss_last_plugin_id == 2) ? "SGSR2" :
+            (ss->dlss_last_plugin_id == 3) ? "FSR2"  :
+            (ss->dlss_last_plugin_id == 4) ? "XeSS"  :
+            (ss->dlss_last_plugin_id == 5) ? "FSR3"  :
+            (ss->dlss_last_plugin_id == 6) ? "FSR4"  :
+            (ss->dlss_last_plugin_id == 9) ? "other" : "none";
+
+        const ImVec4& counterCol = (ss->dlss_evaluate_count > 0) ? COL_GREEN :
+                                   (ss->dlss_init_count     > 0) ? COL_AMBER : COL_TEXT_LO;
+        ImGui::TextColored(counterCol,
+            "NGX init=%u  evaluate=%u  last=%s  ok=%u",
+            ss->dlss_init_count,
+            ss->dlss_evaluate_count,
+            pluginName,
+            ss->dlss_last_plugin_ok);
+
+        if (ss->fg_interpolate_count > 0) {
+            ImGui::TextColored(COL_GREEN, "FG frames emitted: %u", ss->fg_interpolate_count);
+        }
+
+        // Vulkan capability row — only shown on devices where we have
+        // actually probed and populated the state.
+        if (ss->vk_supported) {
+            ImGui::TextColored(ss->vk_shader_image_atomic_int64 ? COL_GREEN : COL_AMBER,
+                "VK: int64=%d  atomicImg64=%d  fp16=%d",
+                ss->vk_shader_int64,
+                ss->vk_shader_image_atomic_int64,
+                ss->vk_shader_float16);
         }
     }
 #endif
